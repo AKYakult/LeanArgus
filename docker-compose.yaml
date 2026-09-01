@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: "argus-pg"
+    environment:
+      POSTGRES_USER: "jin"
+      POSTGRES_PASSWORD: "021799"
+      POSTGRES_DB: "argus"
+    ports:
+      - "12138:5432"
+    volumes:
+      - argus-pg-data:/var/lib/postgresql
+
+volumes:
+  argus-pg-data:
