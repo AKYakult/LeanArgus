@@ -1,0 +1,414 @@
+这个是我目前的项目进度，然后另外一个是完整的参考项目，我希望你叫我下一步该怎么做，我不太熟悉java 和 spring，希望每一步你都能告诉我为什么这么做
+同时请注意，文件内容和包格式需要严格对应参考项目，如果有你觉得更好的改动，那么你可以告诉我
+
+Ran 18 commands
+我已经把两个项目都解压对比过了，先说结论：你的地基打得很扎实，比你自己以为的要好。 下面是完整分析和下一步该做什么。
+
+一、现状对比
+项	你的项目 (MyArgus)	参考项目 (ArgusBack)	状态
+数据库 schema.sql	已经完整复制了参考项目全部表结构（users、user_refresh_tokens、groups、documents...一直到 qa_records）	同左	✅ 数据库这块直接是终点状态，不用再动
+User 实体 / UserMapper	已建好，字段和参考项目完全一致	—	✅
+ApiResponse / 三个异常类 / GlobalExceptionHandler	已建好，逻辑和参考项目基本一致（方法名略有出入）	—	✅ 基本对齐
+build.gradle.kts	已经提前加好了 jjwt 三个包	—	✅ 说明你之前就规划到了要做 JWT
+认证模块 (auth)	只有一个孤零零的 RegisterRequest	完整的注册/登录/JWT/RefreshToken 体系	❌ 这是最大的缺口
+结论：下一步就是把"认证模块"补完。 原因很简单——参考项目里几乎所有其他模块（群组、文档、QA、Assistant）的 Controller 都要靠"当前登录的是谁"来判断权限，这是整个系统能跑起来的前提，必须先做。
+
+在动手之前，我发现你现有代码里有 2 个需要先修一下的小问题（不影响你之前的判断，只是顺手对齐参考项目）：
+
+UserStatus.java 里你写的是 DISABLE，但参考项目、你自己的数据库注释、以及后面要写的 AuthService 里判断逻辑用的都是 DISABLED。这个不一致现在改成本没事，等业务代码写多了再改就要大改。
+RegisterRequest 少了 displayName 字段——参考项目注册时要求填"显示名称"，跟 username（登录名）是分开的两个概念。
+二、认证模块整体路线图（对照参考项目包结构）
+我把 com.argus.rag 换成你的包名 com.example.myargus，文件名和目录结构逐一对应参考项目：
+
+common/security/AuthenticatedUser.java      ← 阶段①（本次做）
+common/security/UserContext.java            ← 阶段①（本次做）
+auth/model/dto/RegisterRequest.java         ← 阶段①（本次做，修正）
+auth/model/dto/LoginRequest.java            ← 阶段①（本次做）
+auth/config/AuthProperties.java             ← 阶段②
+auth/config/AuthConfiguration.java          ← 阶段②
+auth/model/entity/UserRefreshToken.java     ← 阶段②
+auth/mapper/UserRefreshTokenMapper.java     ← 阶段②
+auth/security/JwtAccessTokenService.java    ← 阶段③
+auth/security/AuthCookieSupport.java        ← 阶段③
+auth/security/RefreshTokenService.java      ← 阶段③
+auth/service/PasswordHasher.java            ← 阶段③
+auth/service/PasswordPolicyValidator.java   ← 阶段③
+auth/service/RefreshTokenRecord.java        ← 阶段③
+auth/service/AuthService.java               ← 阶段④
+auth/CurrentUserService.java                ← 阶段④
+auth/model/vo/AuthTokensResponse.java       ← 阶段④
+auth/model/vo/CurrentUserProfileResponse.java ← 阶段④
+auth/controller/AuthController.java         ← 阶段④
+auth/security/JwtAuthenticationFilter.java  ← 阶段⑤
+这次先做阶段①（4 个文件，都是"纯数据结构"，没有业务逻辑，最适合入门），后面几个阶段我们分开做，每一步都跑得通、测得了，不会让你一次性看几十个文件懵掉。
+
+三、阶段①：动手
+1. 修正 UserStatus.java
+java
+package com.example.myargus.common.enums;
+
+public enum UserStatus {
+    ACTIVE,
+    DISABLED   // 原来是 DISABLE，改成 DISABLED
+}
+2. 修正 auth/model/dto/RegisterRequest.java
+为什么要改：参考项目把 username（登录名，纯英文数字）和 displayName（显示昵称，可以是中文）分开了。这是很常见的设计——因为登录名往往有格式限制（不能有空格、不能是中文），但用户希望自己在界面上显示的名字不受这个限制。另外参考项目的 DTO 用的是 record 而不是普通 class + @Data：
+
+record 是 Java 14+ 的语法，专门用来表示"只装数据、不可变"的对象。请求体 DTO 本质就是"收到什么字段就原样读出来"，用 record 比 @Data 的类更简洁、更安全（不会被中途改字段值），Spring 的 JSON 反序列化对 record 支持得很好。这也是为什么参考项目里所有 DTO/VO 全用 record。
+java
+package com.example.myargus.auth.model.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
+/** 注册请求 */
+public record RegisterRequest(
+        @NotBlank(message = "用户名不能为空")
+        @Size(max = 64, message = "用户名长度不能超过 64")
+        String username,
+
+        @Email(message = "邮箱格式非法")
+        @NotBlank(message = "邮箱不能为空")
+        @Size(max = 128, message = "邮箱长度不能超过 128")
+        String email,
+
+        @NotBlank(message = "显示名称不能为空")
+        @Size(max = 128, message = "显示名称长度不能超过 128")
+        String displayName,
+
+        @NotBlank(message = "密码不能为空")
+        @Size(max = 256, message = "密码长度非法")
+        String password
+) {
+}
+注意：具体的密码复杂度（比如"至少 8 位，必须含字母+数字"）没有写在这个 DTO 的注解里，而是交给阶段③要写的 PasswordPolicyValidator 去做。这是有意的分工：@NotBlank/@Size 这类"格式性"校验适合写在 DTO 上，由 Spring 自动触发；而"业务规则"（密码强度、用户名黑名单）适合写在 Service 层，因为这种规则可能被多处复用（注册要校验、改密码也要校验）。
+
+3. 新建 auth/model/dto/LoginRequest.java
+java
+package com.example.myargus.auth.model.dto;
+
+import jakarta.validation.constraints.NotBlank;
+
+/**
+ * 登录请求。
+ *
+ * @param loginId  登录标识（用户名或邮箱都可以登录）
+ * @param password 密码
+ */
+public record LoginRequest(
+        @NotBlank(message = "登录标识不能为空")
+        String loginId,
+        @NotBlank(message = "密码不能为空")
+        String password
+) {
+}
+为什么叫 loginId 而不是 username：因为登录框通常允许用户名或邮箱二选一登录，loginId 这个命名不预设它到底是哪个，后面 Service 层会同时拿它去匹配 username 和 email 两个字段。
+
+4. 新建 common/security/AuthenticatedUser.java
+为什么需要这个类：这是整个认证体系的"通用货币"。之后 JWT 解析出来的用户信息、Controller 里想拿到"当前是谁在请求"，都统一用这个对象来传递，而不是每个地方各自定义一套字段。
+
+java
+package com.example.myargus.common.security;
+
+import com.example.myargus.common.enums.SystemRole;
+
+/**
+ * JWT 解析成功后放入 UserContext 的用户信息。
+ */
+public record AuthenticatedUser(
+        Long userId,
+        String userCode,
+        String displayName,
+        SystemRole systemRole,
+        boolean mustChangePassword
+) {
+}
+5. 新建 common/security/UserContext.java
+这是本次最关键的一个类，值得多讲一下 why：
+
+Spring MVC 处理一个 HTTP 请求时，会从线程池里挑一个线程来处理它（不同请求可能用不同线程，同一线程处理完一个请求后会被复用去处理别的请求）。业务代码里经常需要知道"当前是谁在发请求"——比如 QA 模块要知道是谁在提问、文档模块要知道谁有权限看这份文件。
+
+笨办法是：每个 Controller 方法都手动加一个参数，把当前用户从最外层一路传到最里层的 Service、Mapper——但这样写起来非常啰嗦，参数表会越来越长。
+
+参考项目用的办法是 ThreadLocal：可以理解成"每个线程自带一个储物柜，柜子的钥匙全局唯一，但每个线程打开自己那把钥匙看到的东西是不一样的"。做法是：
+
+请求一进来，JwtAuthenticationFilter（阶段⑤要写）解析出当前用户，往这个"储物柜"里放一份 AuthenticatedUser；
+这次请求处理过程中，任何 Service、任何 Controller，不用传参，直接调 UserContext.get() 就能拿到当前用户；
+请求处理完，finally 里调用 UserContext.clear() 清空储物柜——这一步绝对不能漏，否则线程被复用去处理下一个请求时，"储物柜"里还留着上一个用户的信息，会造成串号（把 A 用户的请求当成 B 用户处理），是很严重的安全漏洞。
+java
+package com.example.myargus.common.security;
+
+/**
+ * 请求级用户上下文，基于 ThreadLocal 实现。
+ * 由 JwtAuthenticationFilter 在请求进入时设置，请求结束时清理。
+ * 业务代码任意位置通过 get() 静态方法获取当前用户，无需传参。
+ */
+public final class UserContext {
+
+    private static final ThreadLocal<AuthenticatedUser> CURRENT_USER = new ThreadLocal<>();
+
+    private UserContext() {
+    }
+
+    /** 设置当前请求的用户信息（由 Filter 调用） */
+    public static void set(AuthenticatedUser user) {
+        CURRENT_USER.set(user);
+    }
+
+    /** 获取当前请求的用户信息，未认证时返回 null */
+    public static AuthenticatedUser get() {
+        return CURRENT_USER.get();
+    }
+
+    /** 清理当前线程的用户信息（由 Filter 在 finally 中调用，防止内存泄漏和数据污染） */
+    public static void clear() {
+        CURRENT_USER.remove();
+    }
+}
+四、关于你要求的"内容和包结构严格对应"，我这里有一处建议改动
+你现在的 common/config/SecurityConfig.java 只放了一个 PasswordEncoder bean。参考项目里没有这个文件——它把密码加密相关的 bean 放进了 auth/config/AuthConfiguration.java（阶段②要写），因为"密码怎么加密"是认证模块的内部实现细节，不属于全局通用配置，放在 auth 包下内聚性更好，也更方便以后看代码的人一眼找到"密码加密逻辑在哪"。
+
+我建议：阶段②写 AuthConfiguration 时，把 PasswordEncoder 这个 bean 一并挪过去，删掉现在的 SecurityConfig.java。这次先不动它，等阶段②给你完整代码时一起处理，避免你现在手忙脚乱改两边。
+
+五、这次你要做的事
+按上面 5 处改动，在你项目里改 2 个文件、新建 3 个文件；
+跑一下 ./gradlew build（或者 IDE 里编译一下），确认没有报错——这几个文件互相之间没有依赖别的还没写的类，应该能顺利过编译。
+改完、编译通过后告诉我，我们接着做阶段②：AuthProperties（JWT 密钥等配置项）+ AuthConfiguration（密码加密 bean）+ UserRefreshToken 实体/Mapper——这一步会讲清楚"为什么 JWT 密钥不能直接写死在代码里"以及 refresh token 为什么要单独存一张表而不是也做成 JWT。
+
+SecurityConfig.java我先删掉了，构建没什么问题
+
+Thought for 13s
+重构认证配置并前移密码编码器接口设计。
+很好,继续。
+
+阶段②:JWT 配置 + 密码加密接口 + RefreshToken 数据层
+这一步做 4 件事,做完之后编译还是能过(但还跑不起来完整流程,因为业务逻辑要到阶段④才补上)。
+
+1. 新建 auth/service/PasswordHasher.java
+为什么要单独抽一个接口,而不是直接在要用的地方 new 一个 BCryptPasswordEncoder:
+
+这是"面向接口编程"的一个典型场景。AuthService(阶段④)需要"把密码哈希一下"和"校验密码是否匹配"这两个能力,但它不需要关心具体用的是 BCrypt 还是别的算法。好处是:
+
+以后想换算法(比如换成 Argon2),只需要改 AuthConfiguration 里注册的实现,AuthService 一行代码不用动;
+写单元测试的时候,可以传一个假的 PasswordHasher 进去,不用真的跑一遍 BCrypt(BCrypt 故意设计得很慢,每次跑几十毫秒,测试跑多了会很卡)。
+java
+package com.example.myargus.auth.service;
+
+/**
+ * 密码哈希接口,默认使用 BCrypt 实现。
+ */
+public interface PasswordHasher {
+
+    /** 对明文密码做哈希 */
+    String hash(String rawPassword);
+
+    /** 校验明文密码是否匹配已存储的哈希值 */
+    boolean matches(String rawPassword, String passwordHash);
+}
+2. 新建 auth/config/AuthProperties.java
+为什么 JWT 密钥、token 有效期这些不能写死在代码里:
+
+密钥这种敏感信息一旦硬编码进 .java 文件,就会被提交到 Git 仓库里,任何能看到源码的人都能拿着这个密钥伪造登录凭证。正确做法是放进 application.yaml(或者更进一步,放到环境变量/密钥管理服务里,application.yaml 里只写占位符),然后用 Spring 的 @ConfigurationProperties 机制自动绑定成一个 Java 对象。
+
+这样做还有个好处:开发环境、测试环境、生产环境可以用不同的配置文件(application-dev.yaml / application-prod.yaml),密钥、过期时间都能按环境单独设置,代码完全不用改。
+
+java
+package com.example.myargus.auth.config;
+
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
+
+/**
+ * 认证相关配置属性,前缀 {@code myargus.auth}。
+ */
+@Validated
+@ConfigurationProperties(prefix = "myargus.auth")
+@Data
+public class AuthProperties {
+
+    /** JWT 签发者 */
+    @NotBlank
+    private String issuer = "myargus";
+
+    /** Access token 有效期（分钟） */
+    @Min(1)
+    private int accessTokenExpireMinutes = 30;
+
+    /** Refresh token 有效期（天） */
+    @Min(1)
+    private int refreshTokenExpireDays = 14;
+
+    /** JWT HMAC 签名密钥,至少 32 字节 */
+    @NotBlank
+    private String jwtSecret;
+
+    /** Refresh token Cookie 名称 */
+    @NotBlank
+    private String refreshCookieName = "MYARGUS_REFRESH_TOKEN";
+
+    /** Refresh token Cookie 是否仅 HTTPS 发送（生产环境应设为 true） */
+    private boolean refreshCookieSecure = true;
+}
+说明一处有意的差异:参考项目配置前缀用的是 argus.rag.auth,我这里改成了 myargus.auth——配置前缀是自己起的命名空间,不需要跟包名/类名严格一致,用你自己项目的名字更清晰。如果你想跟参考项目完全一致也可以,把下面 yaml 和这里的 prefix 都改成 argus.rag.auth 即可,不影响任何逻辑。
+
+3. 新建 auth/config/AuthConfiguration.java
+为什么要在这里同时注册 Clock 这个 bean:
+
+Clock.systemDefaultZone() 就是"现在几点"的意思,但如果代码里到处直接写 LocalDateTime.now(),写单元测试时就没法控制"现在"是哪个时间点(比如想测试"token 过期后能不能用"这种场景,总不能真等 14 天)。把 Clock 做成一个可注入的 bean,测试时可以传一个"固定在某个时间点"的假 Clock 进去,时间相关的逻辑就能被精确控制和测试了。这是个很实用的技巧,值得记住。
+
+这个类同时把原来 SecurityConfig 里的密码加密 bean 也接管过来了:
+
+java
+package com.example.myargus.auth.config;
+
+import com.example.myargus.common.exception.BusinessException;
+import com.example.myargus.auth.service.PasswordHasher;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+
+/**
+ * 认证模块配置,注册 PasswordHasher 和 Clock Bean。
+ */
+@Configuration
+@EnableConfigurationProperties(AuthProperties.class)
+public class AuthConfiguration {
+
+    /** BCrypt 最大输入字节数 */
+    private static final int BCRYPT_MAX_INPUT_BYTES = 72;
+
+    @Bean
+    Clock authClock() {
+        return Clock.systemDefaultZone();
+    }
+
+    /** 基于 BCrypt 的密码哈希实现 */
+    @Bean
+    PasswordHasher defaultPasswordHasher() {
+        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        return new PasswordHasher() {
+            @Override
+            public String hash(String rawPassword) {
+                validateInputLength(rawPassword);
+                return encoder.encode(rawPassword);
+            }
+
+            @Override
+            public boolean matches(String rawPassword, String passwordHash) {
+                validateInputLength(rawPassword);
+                return encoder.matches(rawPassword, passwordHash);
+            }
+
+            private void validateInputLength(String rawValue) {
+                if (rawValue == null || rawValue.getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_INPUT_BYTES) {
+                    throw new BusinessException("密码长度超过安全上限,请控制在 72 字节以内");
+                }
+            }
+        };
+    }
+}
+这里有个容易被忽略但很重要的细节:BCrypt 算法本身有个限制——只会处理密码的前 72 个字节,超出部分会被静默截断(不会报错,而是直接忽略)。如果不做这个校验,会出现一个隐蔽的 bug:用户设置一个 100 字节的密码,注册时存的哈希其实只对应前 72 字节;下次登录如果用户脑子里记的是完整密码,理论上后 28 字节不影响登录结果(因为校验时同样会截断到 72 字节),表面上没问题——但这种"隐性截断"仍然是不好的行为,提前用异常挡住比让用户稀里糊涂踩坑要好。
+
+4. 更新 application.yaml,加上认证配置
+在你现有的 application.yaml 末尾追加:
+
+yaml
+myargus:
+  auth:
+    issuer: myargus
+    access-token-expire-minutes: 30
+    refresh-token-expire-days: 14
+    # 生产环境务必换成随机生成的高强度密钥,且不要提交到 Git
+    jwt-secret: "please-change-this-to-a-random-secret-at-least-32-bytes-long"
+    refresh-cookie-name: MYARGUS_REFRESH_TOKEN
+    refresh-cookie-secure: false   # 本地开发用 http,先设为 false,上线前改成 true
+refresh-cookie-secure: false 是本地开发的临时设置——Cookie 的 Secure 属性要求"只能通过 HTTPS 传输",你本地跑的是 http://localhost,如果设成 true,浏览器会直接拒绝保存这个 Cookie,登录状态会莫名其妙丢失。等你部署到有 HTTPS 的正式环境时记得改回 true。
+
+5. 新建 auth/model/entity/UserRefreshToken.java
+对应你数据库里已经建好的 user_refresh_tokens 表,写法和你已有的 User 实体完全一样的套路:
+
+java
+package com.example.myargus.auth.model.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * 用户 Refresh Token 实体,映射 user_refresh_tokens 表。
+ */
+@TableName("user_refresh_tokens")
+@Data
+public class UserRefreshToken {
+
+    /** 主键 */
+    @TableId(type = IdType.AUTO)
+    private Long id;
+
+    /** 关联的用户 ID */
+    private Long userId;
+
+    /** token 唯一标识（UUID 去横线） */
+    private String tokenId;
+
+    /** token 哈希值,用于安全比对 */
+    private String tokenHash;
+
+    /** 过期时间 */
+    private LocalDateTime expiresAt;
+
+    /** 吊销时间,null 表示未吊销 */
+    private LocalDateTime revokedAt;
+
+    /** 创建时间 */
+    private LocalDateTime createdAt;
+}
+顺便解释一下为什么 refresh token 要专门存一张表,而不是也签成 JWT:
+
+Access token(JWT)的特点是"自包含、无状态"——服务器不用查数据库就能验证它合不合法,靠的是签名。但这个特点也是它的缺陷:一旦签发出去,在过期之前没法主动吊销(除非你专门再搞一套黑名单机制,那还不如干脆用数据库)。
+
+Refresh token 存活时间长(这里配的是 14 天),一旦泄露,风险比只活 30 分钟的 access token 大得多,所以必须支持"随时吊销"——比如用户点击"退出登录"、或者系统检测到异常要强制下线。存数据库、可以直接 UPDATE ... SET revoked_at = now() 就是最直接的解决方案。这也是为什么阶段①⑤都还没做,但数据库表你已经提前建好了。
+
+6. 新建 auth/mapper/UserRefreshTokenMapper.java
+java
+package com.example.myargus.auth.mapper;
+
+import com.example.myargus.auth.model.entity.UserRefreshToken;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Update;
+
+import java.time.LocalDateTime;
+
+@Mapper
+public interface UserRefreshTokenMapper extends BaseMapper<UserRefreshToken> {
+
+    /** 原子吊销:仅当 revoked_at 为 null 时才更新,返回受影响行数用于检测并发重放 */
+    @Update("update user_refresh_tokens set revoked_at = #{revokedAt} where id = #{id} and revoked_at is null")
+    int revokeByIdIfActive(@Param("id") Long id, @Param("revokedAt") LocalDateTime revokedAt);
+}
+这个 revokeByIdIfActive 方法为什么要写成"仅当 revoked_at 为 null 时才更新"而不是直接 update ... where id = ?:
+
+这是在防一种叫 "refresh token 重放攻击" 的场景:假设一个 refresh token 被黑客窃取了。正常用户和黑客几乎同时各拿着同一个 token 去请求"刷新令牌"接口。如果不做原子控制,两个请求可能都读到"这个 token 还没吊销",都各自成功刷新一次,黑客就这样静默拿到了新的合法 token,而你完全不知道。
+
+用 where id = ? and revoked_at is null 这种写法,数据库层面保证了"多个并发请求里只有第一个能成功把 revoked_at 从 null 改成有值",后面的请求执行这条 SQL 时,revoked_at is null 这个条件已经不成立了,返回的受影响行数是 0。阶段④写 AuthService.refresh() 时你会看到:一旦发现"应该能吊销却没吊销成功"(返回 0),就直接判定为疑似重放攻击,把这个用户的所有 token 全部吊销,强制重新登录。
+
+MyBatis-Plus 的 BaseMapper 只提供通用的增删改查,像这种"带条件的原子更新"就得像这样自己写一条 @Update 原生 SQL——这跟你之前 UserMapper 继承 BaseMapper 的写法是完全一样的套路,只是多了一个自定义方法。
+
+你要做的事
+新建上面 5 个文件(PasswordHasher、AuthProperties、AuthConfiguration、UserRefreshToken、UserRefreshTokenMapper),追加 yaml 配置;
+编译一遍,确认没问题。
+这一步做完,应用应该还能正常启动(AuthConfiguration 会在启动时自动注册两个 bean,不需要谁调用它)。改完告诉我,阶段③开始写真正"签发/校验 JWT"和"管理 refresh token"的核心逻辑——这也是全流程里最有意思的一部分。
+

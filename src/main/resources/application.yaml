@@ -23,3 +23,13 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
     default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler
+
+myargus:
+  auth:
+    issuer: myargus
+    access-token-expire-minutes: 30
+    refresh-token-expire-days: 14
+    # 生产环境务必换成随机生成的高强度密钥,且不要提交到 Git
+    jwt-secret: "please-change-this-to-a-random-secret-at-least-32-bytes-long"
+    refresh-cookie-name: MYARGUS_REFRESH_TOKEN
+    refresh-cookie-secure: false   # 本地开发用 http,先设为 false,上线前改成 true
