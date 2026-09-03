@@ -1,6 +1,6 @@
 package com.example.myargus.user.controller;
 
-import com.example.myargus.user.entity.User;
+import com.example.myargus.user.model.entity.User;
 import com.example.myargus.user.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;

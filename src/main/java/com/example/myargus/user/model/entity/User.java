@@ -1,4 +1,4 @@
-package com.example.myargus.user.entity;
+package com.example.myargus.user.model.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;

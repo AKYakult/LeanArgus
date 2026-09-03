@@ -1,414 +1,842 @@
 这个是我目前的项目进度，然后另外一个是完整的参考项目，我希望你叫我下一步该怎么做，我不太熟悉java 和 spring，希望每一步你都能告诉我为什么这么做
 同时请注意，文件内容和包格式需要严格对应参考项目，如果有你觉得更好的改动，那么你可以告诉我
 
-Ran 18 commands
-我已经把两个项目都解压对比过了，先说结论：你的地基打得很扎实，比你自己以为的要好。 下面是完整分析和下一步该做什么。
+我把两个项目都解压看了一遍，说说我的判断。
 
-一、现状对比
-项	你的项目 (MyArgus)	参考项目 (ArgusBack)	状态
-数据库 schema.sql	已经完整复制了参考项目全部表结构（users、user_refresh_tokens、groups、documents...一直到 qa_records）	同左	✅ 数据库这块直接是终点状态，不用再动
-User 实体 / UserMapper	已建好，字段和参考项目完全一致	—	✅
-ApiResponse / 三个异常类 / GlobalExceptionHandler	已建好，逻辑和参考项目基本一致（方法名略有出入）	—	✅ 基本对齐
-build.gradle.kts	已经提前加好了 jjwt 三个包	—	✅ 说明你之前就规划到了要做 JWT
-认证模块 (auth)	只有一个孤零零的 RegisterRequest	完整的注册/登录/JWT/RefreshToken 体系	❌ 这是最大的缺口
-结论：下一步就是把"认证模块"补完。 原因很简单——参考项目里几乎所有其他模块（群组、文档、QA、Assistant）的 Controller 都要靠"当前登录的是谁"来判断权限，这是整个系统能跑起来的前提，必须先做。
+现状对比
 
-在动手之前，我发现你现有代码里有 2 个需要先修一下的小问题（不影响你之前的判断，只是顺手对齐参考项目）：
+你的 MyArgus 目前只搭了三个模块：auth（认证）、common（公共基础设施）、user（用户，只有 entity/mapper，业务层还没写），外加一个占位的 HealthController。
 
-UserStatus.java 里你写的是 DISABLE，但参考项目、你自己的数据库注释、以及后面要写的 AuthService 里判断逻辑用的都是 DISABLED。这个不一致现在改成本没事，等业务代码写多了再改就要大改。
-RegisterRequest 少了 displayName 字段——参考项目注册时要求填"显示名称"，跟 username（登录名）是分开的两个概念。
-二、认证模块整体路线图（对照参考项目包结构）
-我把 com.argus.rag 换成你的包名 com.example.myargus，文件名和目录结构逐一对应参考项目：
+参考项目 ArgusBack 完整得多，一共 9 个模块：auth、common、user、document（文档管理）、ingestion（文档解析入库）、engine（ES/向量库/对象存储适配层）、qa（RAG 问答核心）、group（群组协作）、assistant（AI 助手对话）、metrics（LLM 用量统计）。
 
-common/security/AuthenticatedUser.java      ← 阶段①（本次做）
-common/security/UserContext.java            ← 阶段①（本次做）
-auth/model/dto/RegisterRequest.java         ← 阶段①（本次做，修正）
-auth/model/dto/LoginRequest.java            ← 阶段①（本次做）
-auth/config/AuthProperties.java             ← 阶段②
-auth/config/AuthConfiguration.java          ← 阶段②
-auth/model/entity/UserRefreshToken.java     ← 阶段②
-auth/mapper/UserRefreshTokenMapper.java     ← 阶段②
-auth/security/JwtAccessTokenService.java    ← 阶段③
-auth/security/AuthCookieSupport.java        ← 阶段③
-auth/security/RefreshTokenService.java      ← 阶段③
-auth/service/PasswordHasher.java            ← 阶段③
-auth/service/PasswordPolicyValidator.java   ← 阶段③
-auth/service/RefreshTokenRecord.java        ← 阶段③
-auth/service/AuthService.java               ← 阶段④
-auth/CurrentUserService.java                ← 阶段④
-auth/model/vo/AuthTokensResponse.java       ← 阶段④
-auth/model/vo/CurrentUserProfileResponse.java ← 阶段④
-auth/controller/AuthController.java         ← 阶段④
-auth/security/JwtAuthenticationFilter.java  ← 阶段⑤
-这次先做阶段①（4 个文件，都是"纯数据结构"，没有业务逻辑，最适合入门），后面几个阶段我们分开做，每一步都跑得通、测得了，不会让你一次性看几十个文件懵掉。
+这是一个 RAG 知识库问答系统：用户上传文档 → 解析切片 → 向量化存入 pgvector/ES → 提问时检索相关片段 → 调用大模型生成带引用的回答。auth/user/group 是权限体系，assistant 是更高级的多轮对话 Agent。模块之间有依赖顺序，不能乱插队，这点很关键，下面会讲。
 
-三、阶段①：动手
-1. 修正 UserStatus.java
+两个需要你先拿主意的问题
+Spring Boot 版本不一致：你用的是 4.1.1，参考项目是 3.5.0。你已经很细心地把 mybatis-plus-spring-boot3-starter 换成了 mybatis-plus-spring-boot4-starter，说明你是故意选新版本的。这个选择本身没问题，Boot 4 是新版但对基础 Web/JPA/MyBatis 场景影响不大；只是后面照抄参考代码时，如果遇到某个类在新版里改了包名或被废弃，需要临时查一下，我会在遇到时提醒你，不用现在纠结。
+包名 com.example.myargus vs com.argus.rag：我理解你说的"包格式严格对应"，指的是每个模块内部的分层结构（controller/service/mapper/model/dto/entity/vo 这一套目录约定），而不是根包名本身。根包名只是一个命名空间标识，改不改都不影响功能。我的建议是保留 com.example.myargus，不要重命名——重命名会牵连所有 import、MyBatis XML 的 namespace、以及 IDE 索引，收益却几乎为零，纯粹增加出错概率。如果你坚持要和参考项目完全一致，告诉我，我们再统一改。
+接下来做什么
+
+原则：按模块的依赖顺序推进，而不是想到哪写到哪。 后面的 document/qa/assistant 全部依赖"我是谁、我有没有权限"，所以 auth 模块必须先跑通，这也是你已经开了个头、最接近完成的部分。之后的顺序建议是：
+
+auth（认证，进行中）→ user（用户管理）→ document + engine（文档与存储）
+→ ingestion（解析入库）→ qa（问答核心）→ group（协作）
+→ metrics / assistant（增强功能，最后做）
+立刻要做的：把 auth 模块补完
+
+对比下来，你已经写好了：AuthProperties（配置）、AuthConfiguration（密码哈希 Bean）、JwtAccessTokenService（只有签发 token，缺解析/校验）、UserRefreshTokenMapper、密码策略校验。这部分质量不错，逻辑和参考项目基本一致。
+
+还缺这几块，按这个顺序补，每一步为什么这样做我写在后面：
+
+顺序	要写的文件	为什么是这个顺序
+1	JwtAccessTokenService.parse()	你只能"发"token 还不能"验"token，登录流程闭环不了
+2	RefreshTokenService + RefreshTokenRecord	access token 有效期短（30分钟），得有个机制让用户不用频繁重新输密码
+3	AuthService（编排注册/登录逻辑）	把 PasswordHasher、JwtAccessTokenService、RefreshTokenService 串起来
+4	AuthCookieSupport	refresh token 要放进 HttpOnly Cookie，而不是像 access token 一样明文传
+5	JwtAuthenticationFilter	每个请求进来时，从请求头里把 token 解出来，告诉后面的代码"这个请求是谁发的"
+6	AuthController	真正对外暴露 /api/auth/login、/register、/refresh、/logout 接口
+7	CurrentUserService + DevAdminInitializer	前者给其他模块提供"当前登录用户是谁"的查询入口；后者是开发环境启动时自动建一个管理员账号，省得你每次手动建
+
+先做第 1 步，我们现场写一下，顺便讲清楚 JWT 的验证逻辑，你后面几步会用到同样的套路。
+
+你现在的 issueToken 只做了"签发"：把用户信息塞进 JWT 的 claims 里，用密钥签名。但服务端收到一个 token 时，还需要反向操作——验证签名没被篡改、没过期、issuer 对不对，然后把 claims 里的信息取出来还原成 Java 对象。这就是 parse() 要做的事：
+
 java
-package com.example.myargus.common.enums;
+public AccessTokenClaims parse(String token) {
+    try {
+        Claims claims = Jwts.parser()
+                .verifyWith(signingKey)      // 用签发时同一把密钥验证签名，防止 token 被伪造
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
 
-public enum UserStatus {
-    ACTIVE,
-    DISABLED   // 原来是 DISABLE，改成 DISABLED
+        validateClaims(claims);              // 检查 issuer、必需字段是否齐全
+
+        return new AccessTokenClaims(
+                claims.get(USER_ID_CLAIM, Long.class),
+                claims.getSubject(),
+                claims.get(DISPLAY_NAME_CLAIM, String.class),
+                SystemRole.valueOf(claims.get(SYSTEM_ROLE_CLAIM, String.class)),
+                claims.get(MUST_CHANGE_PASSWORD_CLAIM, Boolean.class),
+                claims.getIssuedAt().toInstant(),
+                claims.getExpiration().toInstant()
+        );
+    } catch (BusinessException exception) {
+        throw exception;
+    } catch (JwtException | IllegalArgumentException exception) {
+        // JWT 库自己会在过期、签名不对时抛这类异常，统一包装成业务异常，
+        // 不要把底层技术细节（比如具体是哪个字节校验失败）暴露给前端
+        throw new BusinessException("access token 非法或已过期", exception);
+    }
 }
-2. 修正 auth/model/dto/RegisterRequest.java
-为什么要改：参考项目把 username（登录名，纯英文数字）和 displayName（显示昵称，可以是中文）分开了。这是很常见的设计——因为登录名往往有格式限制（不能有空格、不能是中文），但用户希望自己在界面上显示的名字不受这个限制。另外参考项目的 DTO 用的是 record 而不是普通 class + @Data：
 
-record 是 Java 14+ 的语法，专门用来表示"只装数据、不可变"的对象。请求体 DTO 本质就是"收到什么字段就原样读出来"，用 record 比 @Data 的类更简洁、更安全（不会被中途改字段值），Spring 的 JSON 反序列化对 record 支持得很好。这也是为什么参考项目里所有 DTO/VO 全用 record。
-java
-package com.example.myargus.auth.model.dto;
-
-import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
-
-/** 注册请求 */
-public record RegisterRequest(
-        @NotBlank(message = "用户名不能为空")
-        @Size(max = 64, message = "用户名长度不能超过 64")
-        String username,
-
-        @Email(message = "邮箱格式非法")
-        @NotBlank(message = "邮箱不能为空")
-        @Size(max = 128, message = "邮箱长度不能超过 128")
-        String email,
-
-        @NotBlank(message = "显示名称不能为空")
-        @Size(max = 128, message = "显示名称长度不能超过 128")
-        String displayName,
-
-        @NotBlank(message = "密码不能为空")
-        @Size(max = 256, message = "密码长度非法")
-        String password
-) {
+/** 校验 claims 完整性——防止拿到一个签名合法但字段缺失的畸形 token */
+private void validateClaims(Claims claims) {
+    if (!authProperties.getIssuer().equals(claims.getIssuer())
+            || claims.getSubject() == null
+            || claims.get(USER_ID_CLAIM, Long.class) == null
+            || claims.get(DISPLAY_NAME_CLAIM, String.class) == null
+            || claims.get(SYSTEM_ROLE_CLAIM, String.class) == null
+            || claims.get(MUST_CHANGE_PASSWORD_CLAIM, Boolean.class) == null
+            || claims.getIssuedAt() == null
+            || claims.getExpiration() == null) {
+        throw new BusinessException("access token 非法或已过期");
+    }
 }
-注意：具体的密码复杂度（比如"至少 8 位，必须含字母+数字"）没有写在这个 DTO 的注解里，而是交给阶段③要写的 PasswordPolicyValidator 去做。这是有意的分工：@NotBlank/@Size 这类"格式性"校验适合写在 DTO 上，由 Spring 自动触发；而"业务规则"（密码强度、用户名黑名单）适合写在 Service 层，因为这种规则可能被多处复用（注册要校验、改密码也要校验）。
 
-3. 新建 auth/model/dto/LoginRequest.java
-java
-package com.example.myargus.auth.model.dto;
+AccessTokenClaims 这个 record 你已经定义了，直接复用即可，不用改。import io.jsonwebtoken.Claims; 和 io.jsonwebtoken.JwtException; 记得加上。
 
-import jakarta.validation.constraints.NotBlank;
+这一步做完后，把结果贴给我或者直接说"下一步"，我们接着做第 2 步——RefreshTokenService，那里会讲到为什么 refresh token 要存数据库而不是也用 JWT 自包含的方式（提示：因为需要支持"登出即刻失效"，纯 JWT 做不到这一点）。
 
-/**
- * 登录请求。
- *
- * @param loginId  登录标识（用户名或邮箱都可以登录）
- * @param password 密码
- */
-public record LoginRequest(
-        @NotBlank(message = "登录标识不能为空")
-        String loginId,
-        @NotBlank(message = "密码不能为空")
-        String password
-) {
-}
-为什么叫 loginId 而不是 username：因为登录框通常允许用户名或邮箱二选一登录，loginId 这个命名不预设它到底是哪个，后面 Service 层会同时拿它去匹配 username 和 email 两个字段。
+package com.example.myargus.auth.security;
 
-4. 新建 common/security/AuthenticatedUser.java
-为什么需要这个类：这是整个认证体系的"通用货币"。之后 JWT 解析出来的用户信息、Controller 里想拿到"当前是谁在请求"，都统一用这个对象来传递，而不是每个地方各自定义一套字段。
-
-java
-package com.example.myargus.common.security;
-
+import com.example.myargus.auth.config.AuthProperties;
 import com.example.myargus.common.enums.SystemRole;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.stereotype.Service;
 
-/**
- * JWT 解析成功后放入 UserContext 的用户信息。
- */
-public record AuthenticatedUser(
-        Long userId,
-        String userCode,
-        String displayName,
-        SystemRole systemRole,
-        boolean mustChangePassword
-) {
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
+
+@Service
+public class JwtAccessTokenService {
+    private static final String USER_ID_CLAIM = "uid";
+    private static final String DISPLAY_NAME_CLAIM = "displayName";
+    private static final String SYSTEM_ROLE_CLAIM = "systemRole";
+    private static final String MUST_CHANGE_PASSWORD_CLAIM = "mustChangePassword";
+    private static final int MIN_SECRET_LENGTH = 32;
+
+    private final AuthProperties authProperties;
+    private final Clock clock;
+    private final SecretKey signingKey;
+
+    /** 从配置的字符串构建 HMAC 密钥 */
+    private SecretKey buildSigningKey(String jwtSecret) {
+        byte[] secretBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
+        if (secretBytes.length < MIN_SECRET_LENGTH) {
+            throw new IllegalStateException("JWT secret 至少需要 32 字节");
+        }
+        return Keys.hmacShaKeyFor(secretBytes);
+    }
+
+    public  JwtAccessTokenService(AuthProperties authProperties, Clock clock) {
+        this.authProperties = authProperties;
+        this.clock = clock;
+        this.signingKey = buildSigningKey(authProperties.getJwtSecret());
+    }
+
+    /** 签发 token 时的主题信息 */
+    public record TokenSubject(
+            Long userId,
+            String userCode,
+            String displayName,
+            SystemRole systemRole,
+            boolean mustChangePassword
+    ) {
+    }
+
+    /** 解析 token 后的声明信息 */
+    public record AccessTokenClaims(
+            Long userId,
+            String userCode,
+            String displayName,
+            SystemRole systemRole,
+            boolean mustChangePassword,
+            Instant issuedAt,
+            Instant expiresAt
+    ) {
+    }
+
+    public String issueToken(TokenSubject subject) {
+        Instant issuedAt = clock.instant();
+        Instant expireAt = issuedAt.plus(authProperties.getAccessTokenExpireMinutes(), ChronoUnit.MINUTES);
+        return Jwts.builder()
+                .issuer(authProperties.getIssuer())
+                .subject(subject.userCode)
+                .issuedAt(Date.from(issuedAt))
+                .expiration(Date.from(expireAt))
+                .claim(USER_ID_CLAIM,subject.userId)
+                .claim(DISPLAY_NAME_CLAIM, subject.displayName())
+                .claim(SYSTEM_ROLE_CLAIM, subject.systemRole().name())
+                .claim(MUST_CHANGE_PASSWORD_CLAIM, subject.mustChangePassword())
+                .signWith(signingKey)
+                .compact();
+    }
+
 }
-5. 新建 common/security/UserContext.java
-这是本次最关键的一个类，值得多讲一下 why：
 
-Spring MVC 处理一个 HTTP 请求时，会从线程池里挑一个线程来处理它（不同请求可能用不同线程，同一线程处理完一个请求后会被复用去处理别的请求）。业务代码里经常需要知道"当前是谁在发请求"——比如 QA 模块要知道是谁在提问、文档模块要知道谁有权限看这份文件。
+在这里写吗？给我完整的
 
-笨办法是：每个 Controller 方法都手动加一个参数，把当前用户从最外层一路传到最里层的 Service、Mapper——但这样写起来非常啰嗦，参数表会越来越长。
+对，就加在这个类里面——issueToken 和 TokenSubject/AccessTokenClaims 之间或后面都行，我把它放在 issueToken 后面，逻辑上"先签发、后解析"顺序更好读。下面是完整文件，可以直接整个替换你现在的内容：
 
-参考项目用的办法是 ThreadLocal：可以理解成"每个线程自带一个储物柜，柜子的钥匙全局唯一，但每个线程打开自己那把钥匙看到的东西是不一样的"。做法是：
-
-请求一进来，JwtAuthenticationFilter（阶段⑤要写）解析出当前用户，往这个"储物柜"里放一份 AuthenticatedUser；
-这次请求处理过程中，任何 Service、任何 Controller，不用传参，直接调 UserContext.get() 就能拿到当前用户；
-请求处理完，finally 里调用 UserContext.clear() 清空储物柜——这一步绝对不能漏，否则线程被复用去处理下一个请求时，"储物柜"里还留着上一个用户的信息，会造成串号（把 A 用户的请求当成 B 用户处理），是很严重的安全漏洞。
 java
-package com.example.myargus.common.security;
+package com.example.myargus.auth.security;
 
-/**
- * 请求级用户上下文，基于 ThreadLocal 实现。
- * 由 JwtAuthenticationFilter 在请求进入时设置，请求结束时清理。
- * 业务代码任意位置通过 get() 静态方法获取当前用户，无需传参。
- */
-public final class UserContext {
+import com.example.myargus.auth.config.AuthProperties;
+import com.example.myargus.common.enums.SystemRole;
+import com.example.myargus.common.exception.BusinessException;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.stereotype.Service;
 
-    private static final ThreadLocal<AuthenticatedUser> CURRENT_USER = new ThreadLocal<>();
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
 
-    private UserContext() {
+@Service
+public class JwtAccessTokenService {
+    private static final String USER_ID_CLAIM = "uid";
+    private static final String DISPLAY_NAME_CLAIM = "displayName";
+    private static final String SYSTEM_ROLE_CLAIM = "systemRole";
+    private static final String MUST_CHANGE_PASSWORD_CLAIM = "mustChangePassword";
+    private static final int MIN_SECRET_LENGTH = 32;
+
+    private final AuthProperties authProperties;
+    private final Clock clock;
+    private final SecretKey signingKey;
+
+    /** 从配置的字符串构建 HMAC 密钥 */
+    private SecretKey buildSigningKey(String jwtSecret) {
+        byte[] secretBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
+        if (secretBytes.length < MIN_SECRET_LENGTH) {
+            throw new IllegalStateException("JWT secret 至少需要 32 字节");
+        }
+        return Keys.hmacShaKeyFor(secretBytes);
     }
 
-    /** 设置当前请求的用户信息（由 Filter 调用） */
-    public static void set(AuthenticatedUser user) {
-        CURRENT_USER.set(user);
+    public JwtAccessTokenService(AuthProperties authProperties, Clock clock) {
+        this.authProperties = authProperties;
+        this.clock = clock;
+        this.signingKey = buildSigningKey(authProperties.getJwtSecret());
     }
 
-    /** 获取当前请求的用户信息，未认证时返回 null */
-    public static AuthenticatedUser get() {
-        return CURRENT_USER.get();
+    /** 签发 token 时的主题信息 */
+    public record TokenSubject(
+            Long userId,
+            String userCode,
+            String displayName,
+            SystemRole systemRole,
+            boolean mustChangePassword
+    ) {
     }
 
-    /** 清理当前线程的用户信息（由 Filter 在 finally 中调用，防止内存泄漏和数据污染） */
-    public static void clear() {
-        CURRENT_USER.remove();
+    /** 解析 token 后的声明信息 */
+    public record AccessTokenClaims(
+            Long userId,
+            String userCode,
+            String displayName,
+            SystemRole systemRole,
+            boolean mustChangePassword,
+            Instant issuedAt,
+            Instant expiresAt
+    ) {
+    }
+
+    public String issueToken(TokenSubject subject) {
+        Instant issuedAt = clock.instant();
+        Instant expireAt = issuedAt.plus(authProperties.getAccessTokenExpireMinutes(), ChronoUnit.MINUTES);
+        return Jwts.builder()
+                .issuer(authProperties.getIssuer())
+                .subject(subject.userCode)
+                .issuedAt(Date.from(issuedAt))
+                .expiration(Date.from(expireAt))
+                .claim(USER_ID_CLAIM, subject.userId)
+                .claim(DISPLAY_NAME_CLAIM, subject.displayName())
+                .claim(SYSTEM_ROLE_CLAIM, subject.systemRole().name())
+                .claim(MUST_CHANGE_PASSWORD_CLAIM, subject.mustChangePassword())
+                .signWith(signingKey)
+                .compact();
+    }
+
+    /**
+     * 解析并校验 access token。
+     * <p>
+     * 会校验签名（防篡改）、过期时间（Jwts 库内部自动检查）、issuer 是否匹配，
+     * 以及自定义 claims 是否齐全。任何一项不满足都统一抛 BusinessException，
+     * 不把 JWT 库的底层异常细节暴露给调用方。
+     */
+    public AccessTokenClaims parse(String token) {
+        try {
+            Claims claims = Jwts.parser()
+                    .verifyWith(signingKey)
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+
+            validateClaims(claims);
+
+            return new AccessTokenClaims(
+                    claims.get(USER_ID_CLAIM, Long.class),
+                    claims.getSubject(),
+                    claims.get(DISPLAY_NAME_CLAIM, String.class),
+                    SystemRole.valueOf(claims.get(SYSTEM_ROLE_CLAIM, String.class)),
+                    claims.get(MUST_CHANGE_PASSWORD_CLAIM, Boolean.class),
+                    claims.getIssuedAt().toInstant(),
+                    claims.getExpiration().toInstant()
+            );
+        } catch (BusinessException exception) {
+            throw exception;
+        } catch (JwtException | IllegalArgumentException exception) {
+            throw new BusinessException("access token 非法或已过期", exception);
+        }
+    }
+
+    /** 校验 claims 完整性——防止拿到一个签名合法但字段缺失的畸形 token */
+    private void validateClaims(Claims claims) {
+        if (!authProperties.getIssuer().equals(claims.getIssuer())
+                || claims.getSubject() == null
+                || claims.get(USER_ID_CLAIM, Long.class) == null
+                || claims.get(DISPLAY_NAME_CLAIM, String.class) == null
+                || claims.get(SYSTEM_ROLE_CLAIM, String.class) == null
+                || claims.get(MUST_CHANGE_PASSWORD_CLAIM, Boolean.class) == null
+                || claims.getIssuedAt() == null
+                || claims.getExpiration() == null) {
+            throw new BusinessException("access token 非法或已过期");
+        }
     }
 }
-四、关于你要求的"内容和包结构严格对应"，我这里有一处建议改动
-你现在的 common/config/SecurityConfig.java 只放了一个 PasswordEncoder bean。参考项目里没有这个文件——它把密码加密相关的 bean 放进了 auth/config/AuthConfiguration.java（阶段②要写），因为"密码怎么加密"是认证模块的内部实现细节，不属于全局通用配置，放在 auth 包下内聚性更好，也更方便以后看代码的人一眼找到"密码加密逻辑在哪"。
 
-我建议：阶段②写 AuthConfiguration 时，把 PasswordEncoder 这个 bean 一并挪过去，删掉现在的 SecurityConfig.java。这次先不动它，等阶段②给你完整代码时一起处理，避免你现在手忙脚乱改两边。
+改动点说明：
 
-五、这次你要做的事
-按上面 5 处改动，在你项目里改 2 个文件、新建 3 个文件；
-跑一下 ./gradlew build（或者 IDE 里编译一下），确认没有报错——这几个文件互相之间没有依赖别的还没写的类，应该能顺利过编译。
-改完、编译通过后告诉我，我们接着做阶段②：AuthProperties（JWT 密钥等配置项）+ AuthConfiguration（密码加密 bean）+ UserRefreshToken 实体/Mapper——这一步会讲清楚"为什么 JWT 密钥不能直接写死在代码里"以及 refresh token 为什么要单独存一张表而不是也做成 JWT。
+新增了 import 的 Claims、JwtException、BusinessException——BusinessException 你在 common.exception 包里已经有了，直接复用。
+Jwts.parser()...verifyWith(signingKey) 里的 verifyWith 是 jjwt 0.12.x 的新写法（对应 0.11.x 时代的 setSigningKey），你的 build.gradle 里锁的就是 0.12.6，版本对得上，不用改依赖。
+过期校验是库自动做的：如果 token 已过期，parseSignedClaims 内部会直接抛 ExpiredJwtException（它是 JwtException 的子类），会被 catch 块捕获，你不需要自己再手动比较时间。
 
-SecurityConfig.java我先删掉了，构建没什么问题
+这一步编译应该能直接过。确认没问题的话，我们继续第 2 步——RefreshTokenService。
 
-Thought for 13s
-重构认证配置并前移密码编码器接口设计。
-很好,继续。
+很好，继续。第 2 步是 RefreshTokenService，这是 auth 模块里逻辑最绕的一块，我先讲清楚设计思路，再给代码。
 
-阶段②:JWT 配置 + 密码加密接口 + RefreshToken 数据层
-这一步做 4 件事,做完之后编译还是能过(但还跑不起来完整流程,因为业务逻辑要到阶段④才补上)。
+为什么需要单独的 Refresh Token 机制
 
-1. 新建 auth/service/PasswordHasher.java
-为什么要单独抽一个接口,而不是直接在要用的地方 new 一个 BCryptPasswordEncoder:
+Access token（也就是 JWT）设计成短命的（30 分钟），是为了万一泄露，损失可控——过期了自动失效。但用户不可能 30 分钟就得重新登录一次，所以需要一个"续期凭证"：refresh token，有效期长（14 天），专门用来换新的 access token。
 
-这是"面向接口编程"的一个典型场景。AuthService(阶段④)需要"把密码哈希一下"和"校验密码是否匹配"这两个能力,但它不需要关心具体用的是 BCrypt 还是别的算法。好处是:
+问题是：JWT 本身是自包含、无状态的，签发后服务端不存它，就没法在用户"登出"时让它作废（除非等它自然过期）。Refresh token 反其道而行——把它存进数据库，这样就能做到：
 
-以后想换算法(比如换成 Argon2),只需要改 AuthConfiguration 里注册的实现,AuthService 一行代码不用动;
-写单元测试的时候,可以传一个假的 PasswordHasher 进去,不用真的跑一遍 BCrypt(BCrypt 故意设计得很慢,每次跑几十毫秒,测试跑多了会很卡)。
+登出时把数据库记录标记为已吊销（revoked_at），token 立刻失效；
+检测到 token 被盗用重放时，也能主动吊销。
+token 格式为什么是 tokenId.secret
+
+存数据库就要能查，但如果直接把 refresh token 明文存库，一旦数据库泄露，所有 token 全部沦陷（和明文存密码一个道理）。所以做法和存密码一样——哈希后存。但哈希之后没法用来做 WHERE 查询（哈希是单向的，不能反查），所以把 token 拆成两段：
+
+tokenId：明文存库，只用来当索引，查出候选记录；
+secret：不存明文，只存它的 BCrypt 哈希，查到候选记录后再用 passwordHasher.matches() 比对。
+
+这样即使数据库泄露，攻击者拿到的也只是哈希值，伪造不出能通过校验的 token。
+
+两个文件
+
+RefreshTokenRecord.java（放在 auth/service 包，和 PasswordHasher、PasswordPolicyValidator 同级）：
+
 java
 package com.example.myargus.auth.service;
 
-/**
- * 密码哈希接口,默认使用 BCrypt 实现。
- */
-public interface PasswordHasher {
-
-    /** 对明文密码做哈希 */
-    String hash(String rawPassword);
-
-    /** 校验明文密码是否匹配已存储的哈希值 */
-    boolean matches(String rawPassword, String passwordHash);
-}
-2. 新建 auth/config/AuthProperties.java
-为什么 JWT 密钥、token 有效期这些不能写死在代码里:
-
-密钥这种敏感信息一旦硬编码进 .java 文件,就会被提交到 Git 仓库里,任何能看到源码的人都能拿着这个密钥伪造登录凭证。正确做法是放进 application.yaml(或者更进一步,放到环境变量/密钥管理服务里,application.yaml 里只写占位符),然后用 Spring 的 @ConfigurationProperties 机制自动绑定成一个 Java 对象。
-
-这样做还有个好处:开发环境、测试环境、生产环境可以用不同的配置文件(application-dev.yaml / application-prod.yaml),密钥、过期时间都能按环境单独设置,代码完全不用改。
-
-java
-package com.example.myargus.auth.config;
-
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import lombok.Data;
-import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.validation.annotation.Validated;
+import java.time.LocalDateTime;
 
 /**
- * 认证相关配置属性,前缀 {@code myargus.auth}。
+ * Refresh Token 数据库记录。
  */
-@Validated
-@ConfigurationProperties(prefix = "myargus.auth")
-@Data
-public class AuthProperties {
+public record RefreshTokenRecord(
+        /** 主键 */
+        Long id,
+        /** 关联用户 ID */
+        Long userId,
+        /** token 唯一标识 */
+        String tokenId,
+        /** BCrypt 哈希后的 token */
+        String tokenHash,
+        /** 过期时间 */
+        LocalDateTime expiresAt,
+        /** 吊销时间，null 表示未吊销 */
+        LocalDateTime revokedAt
+) {
 
-    /** JWT 签发者 */
-    @NotBlank
-    private String issuer = "myargus";
-
-    /** Access token 有效期（分钟） */
-    @Min(1)
-    private int accessTokenExpireMinutes = 30;
-
-    /** Refresh token 有效期（天） */
-    @Min(1)
-    private int refreshTokenExpireDays = 14;
-
-    /** JWT HMAC 签名密钥,至少 32 字节 */
-    @NotBlank
-    private String jwtSecret;
-
-    /** Refresh token Cookie 名称 */
-    @NotBlank
-    private String refreshCookieName = "MYARGUS_REFRESH_TOKEN";
-
-    /** Refresh token Cookie 是否仅 HTTPS 发送（生产环境应设为 true） */
-    private boolean refreshCookieSecure = true;
+    /** 判断 token 是否当前有效 */
+    public boolean isActive(LocalDateTime now) {
+        return revokedAt == null && expiresAt.isAfter(now);
+    }
 }
-说明一处有意的差异:参考项目配置前缀用的是 argus.rag.auth,我这里改成了 myargus.auth——配置前缀是自己起的命名空间,不需要跟包名/类名严格一致,用你自己项目的名字更清晰。如果你想跟参考项目完全一致也可以,把下面 yaml 和这里的 prefix 都改成 argus.rag.auth 即可,不影响任何逻辑。
 
-3. 新建 auth/config/AuthConfiguration.java
-为什么要在这里同时注册 Clock 这个 bean:
+这是个纯数据载体，之所以不直接把 UserRefreshToken 实体（MyBatis-Plus 的 @TableName 那个类）传来传去，是为了让 service 层不依赖持久化层的具体实现细节——这是分层的常见做法，AuthService 以后只需要认识 RefreshTokenRecord，不需要知道底层是 MyBatis 还是别的什么。
 
-Clock.systemDefaultZone() 就是"现在几点"的意思,但如果代码里到处直接写 LocalDateTime.now(),写单元测试时就没法控制"现在"是哪个时间点(比如想测试"token 过期后能不能用"这种场景,总不能真等 14 天)。把 Clock 做成一个可注入的 bean,测试时可以传一个"固定在某个时间点"的假 Clock 进去,时间相关的逻辑就能被精确控制和测试了。这是个很实用的技巧,值得记住。
-
-这个类同时把原来 SecurityConfig 里的密码加密 bean 也接管过来了:
+RefreshTokenService.java（放在 auth/security 包，和 JwtAccessTokenService 同级）：
 
 java
-package com.example.myargus.auth.config;
+package com.example.myargus.auth.security;
 
-import com.example.myargus.common.exception.BusinessException;
+import com.example.myargus.auth.config.AuthProperties;
+import com.example.myargus.auth.mapper.UserRefreshTokenMapper;
+import com.example.myargus.auth.model.entity.UserRefreshToken;
 import com.example.myargus.auth.service.PasswordHasher;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import com.example.myargus.auth.service.RefreshTokenRecord;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.time.Clock;
+import java.time.LocalDateTime;
+import java.util.Base64;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
- * 认证模块配置,注册 PasswordHasher 和 Clock Bean。
+ * Refresh Token 管理服务。
+ * <p>
+ * Refresh token 格式为 {@code tokenId.secret}，tokenId 明文字段索引查找记录，
+ * secret 部分 bcrypt 哈希存储。签发和吊销均操作 user_refresh_tokens 表。
  */
-@Configuration
-@EnableConfigurationProperties(AuthProperties.class)
-public class AuthConfiguration {
+@Service
+public class RefreshTokenService {
 
-    /** BCrypt 最大输入字节数 */
-    private static final int BCRYPT_MAX_INPUT_BYTES = 72;
+    private static final String TOKEN_SEPARATOR = ".";
+    /** 随机 secret 字节数，Base64URL 编码后约 32 字符 */
+    private static final int SECRET_BYTES = 24;
 
-    @Bean
-    Clock authClock() {
-        return Clock.systemDefaultZone();
+    private final UserRefreshTokenMapper tokenMapper;
+    private final PasswordHasher passwordHasher;
+    private final AuthProperties authProperties;
+    private final Clock clock;
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    public RefreshTokenService(
+            UserRefreshTokenMapper tokenMapper,
+            PasswordHasher passwordHasher,
+            AuthProperties authProperties,
+            Clock clock
+    ) {
+        this.tokenMapper = tokenMapper;
+        this.passwordHasher = passwordHasher;
+        this.authProperties = authProperties;
+        this.clock = clock;
     }
 
-    /** 基于 BCrypt 的密码哈希实现 */
-    @Bean
-    PasswordHasher defaultPasswordHasher() {
-        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
-        return new PasswordHasher() {
-            @Override
-            public String hash(String rawPassword) {
-                validateInputLength(rawPassword);
-                return encoder.encode(rawPassword);
-            }
+    /** 签发新的 refresh token */
+    public IssuedRefreshToken issueToken(Long userId) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        String tokenId = UUID.randomUUID().toString().replace("-", "");
+        String refreshToken = tokenId + TOKEN_SEPARATOR + newTokenSecret();
+        LocalDateTime expiresAt = now.plusDays(authProperties.getRefreshTokenExpireDays());
 
-            @Override
-            public boolean matches(String rawPassword, String passwordHash) {
-                validateInputLength(rawPassword);
-                return encoder.matches(rawPassword, passwordHash);
-            }
+        UserRefreshToken entity = new UserRefreshToken();
+        entity.setUserId(userId);
+        entity.setTokenId(tokenId);
+        entity.setTokenHash(passwordHasher.hash(refreshToken));
+        entity.setExpiresAt(expiresAt);
+        entity.setCreatedAt(now);
+        tokenMapper.insert(entity);
 
-            private void validateInputLength(String rawValue) {
-                if (rawValue == null || rawValue.getBytes(StandardCharsets.UTF_8).length > BCRYPT_MAX_INPUT_BYTES) {
-                    throw new BusinessException("密码长度超过安全上限,请控制在 72 字节以内");
-                }
-            }
-        };
+        return new IssuedRefreshToken(refreshToken, toRecord(entity));
+    }
+
+    /** 查找有效（未吊销且未过期）的 token 记录 */
+    public Optional<RefreshTokenRecord> findActiveToken(String refreshToken) {
+        Optional<ParsedRefreshToken> parsedToken = parseToken(refreshToken);
+        if (parsedToken.isEmpty()) {
+            return Optional.empty();
+        }
+        UserRefreshToken entity = tokenMapper.selectOne(
+                new LambdaQueryWrapper<UserRefreshToken>()
+                        .eq(UserRefreshToken::getTokenId, parsedToken.get().tokenId())
+        );
+        if (entity == null) {
+            return Optional.empty();
+        }
+        RefreshTokenRecord record = toRecord(entity);
+        if (!passwordHasher.matches(refreshToken, record.tokenHash())) {
+            return Optional.empty();
+        }
+        if (!record.isActive(LocalDateTime.now(clock))) {
+            return Optional.empty();
+        }
+        return Optional.of(record);
+    }
+
+    /** 吊销指定用户所有有效 token（登录时调用，实现单设备登录） */
+    public void revokeActiveTokens(Long userId) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        UserRefreshToken update = new UserRefreshToken();
+        update.setRevokedAt(now);
+        tokenMapper.update(update,
+                new LambdaQueryWrapper<UserRefreshToken>()
+                        .eq(UserRefreshToken::getUserId, userId)
+                        .isNull(UserRefreshToken::getRevokedAt)
+                        .gt(UserRefreshToken::getExpiresAt, now)
+        );
+    }
+
+    /** 原子吊销单条 token（登出时调用），返回 true 表示成功吊销 */
+    public boolean revokeToken(String refreshToken) {
+        Optional<RefreshTokenRecord> activeToken = findActiveToken(refreshToken);
+        if (activeToken.isEmpty()) {
+            return false;
+        }
+        return revokeTokenById(activeToken.get().id());
+    }
+
+    /**
+     * 原子吊销指定 ID 的 token：仅当 revoked_at 仍为 null 时才更新。
+     * 返回 true 表示成功吊销，false 表示已被其他请求抢先吊销（疑似 token 窃取）。
+     */
+    public boolean revokeTokenById(Long id) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        return tokenMapper.revokeByIdIfActive(id, now) > 0;
+    }
+
+    /** 解析 token 格式：tokenId.secret */
+    private Optional<ParsedRefreshToken> parseToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return Optional.empty();
+        }
+        String[] segments = refreshToken.trim().split("\\Q" + TOKEN_SEPARATOR + "\\E", 2);
+        if (segments.length != 2 || segments[0].isBlank() || segments[1].isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(new ParsedRefreshToken(segments[0], segments[1]));
+    }
+
+    /** 生成安全随机 secret */
+    private String newTokenSecret() {
+        byte[] bytes = new byte[SECRET_BYTES];
+        secureRandom.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private static RefreshTokenRecord toRecord(UserRefreshToken entity) {
+        return new RefreshTokenRecord(
+                entity.getId(),
+                entity.getUserId(),
+                entity.getTokenId(),
+                entity.getTokenHash(),
+                entity.getExpiresAt(),
+                entity.getRevokedAt()
+        );
+    }
+
+    private record ParsedRefreshToken(String tokenId, String secret) {
+    }
+
+    /** 签发后返回给调用方的 token 信息 */
+    public record IssuedRefreshToken(String refreshToken, RefreshTokenRecord record) {
     }
 }
-这里有个容易被忽略但很重要的细节:BCrypt 算法本身有个限制——只会处理密码的前 72 个字节,超出部分会被静默截断(不会报错,而是直接忽略)。如果不做这个校验,会出现一个隐蔽的 bug:用户设置一个 100 字节的密码,注册时存的哈希其实只对应前 72 字节;下次登录如果用户脑子里记的是完整密码,理论上后 28 字节不影响登录结果(因为校验时同样会截断到 72 字节),表面上没问题——但这种"隐性截断"仍然是不好的行为,提前用异常挡住比让用户稀里糊涂踩坑要好。
 
-4. 更新 application.yaml,加上认证配置
-在你现有的 application.yaml 末尾追加:
+几个值得注意的点，因为涉及到 Java/Spring 里几个常用套路：
 
-yaml
-myargus:
-  auth:
-    issuer: myargus
-    access-token-expire-minutes: 30
-    refresh-token-expire-days: 14
-    # 生产环境务必换成随机生成的高强度密钥,且不要提交到 Git
-    jwt-secret: "please-change-this-to-a-random-secret-at-least-32-bytes-long"
-    refresh-cookie-name: MYARGUS_REFRESH_TOKEN
-    refresh-cookie-secure: false   # 本地开发用 http,先设为 false,上线前改成 true
-refresh-cookie-secure: false 是本地开发的临时设置——Cookie 的 Secure 属性要求"只能通过 HTTPS 传输",你本地跑的是 http://localhost,如果设成 true,浏览器会直接拒绝保存这个 Cookie,登录状态会莫名其妙丢失。等你部署到有 HTTPS 的正式环境时记得改回 true。
+Optional<T>：用来代替"可能返回 null"。findActiveToken 找不到有效 token 时返回 Optional.empty()，调用方必须显式处理"没有值"这个情况（用 .isEmpty()/.isPresent()/.get()），比直接返回 null 更不容易漏判导致空指针异常。
+LambdaQueryWrapper：MyBatis-Plus 提供的查询构造器，UserRefreshToken::getTokenId 是方法引用，好处是类型安全、重构友好——如果你改了字段名，IDE 会自动帮你把这里也改掉；比手写 SQL 字符串（打错字段名要运行时才报错）安全得多。
+revokeActiveTokens vs revokeTokenById 的区别：前者是"登录时把这个用户之前所有还活着的 token 全部作废"（实现单设备登录，新登录挤掉旧登录）；后者是"登出/刷新时只作废这一条"，而且用了原子更新（update ... where id = ? and revoked_at is null），如果两个请求同时想吊销同一条 token，只有一个能成功——这是并发场景下防止竞态条件的标准写法，revokeToken 返回 false 时甚至可以理解为"这个 token 已经被别人用过了，有被盗用嫌疑"。
 
-5. 新建 auth/model/entity/UserRefreshToken.java
-对应你数据库里已经建好的 user_refresh_tokens 表,写法和你已有的 User 实体完全一样的套路:
+写完后跑一下 ./gradlew compileJava 确认没有编译错误（应该没问题，字段名和你已有的 UserRefreshToken 实体、UserRefreshTokenMapper 完全对得上）。搞定后告诉我，下一步是 AuthService——把 PasswordHasher、JwtAccessTokenService、RefreshTokenService 三者串成完整的注册/登录业务逻辑。
+
+我写好了，下一步做什么
+
+继续之前得先说一句：AuthService 依赖了 User 模块里几个还没补全（或者路径不对）的东西，直接抄参考项目的 AuthService 会编译不过。所以这一步我们先把 user 模块的缺口补上，再回来写 AuthService——这正好也是你说的"包格式要严格对应"要处理的地方。
+
+发现的问题
+
+你现在的 User.java 放在 user.entity 包下，但参考项目是 user.model.entity（多一层 model）。这个多出来的 model 层是一种约定：把"数据结构"（model 下的 entity/dto/vo）和"逻辑代码"（service/controller/mapper）分开归类，模块大了之后好找文件。既然你要求严格对应，这里要挪一下。
+
+另外 UserMapper 缺一个按用户名/邮箱查用户的方法，而且这个方法不能用简单注解写，得用 XML——这个我下面解释原因。
+
+第一步：把 User 实体挪到正确的包
+
+删除 user/entity/User.java，在 user/model/entity/User.java 新建同样内容（内容你已经写对了，只是位置不对）：
 
 java
-package com.example.myargus.auth.model.entity;
+package com.example.myargus.user.model.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.example.myargus.common.enums.SystemRole;
+import com.example.myargus.common.enums.UserStatus;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 用户 Refresh Token 实体,映射 user_refresh_tokens 表。
- */
-@TableName("user_refresh_tokens")
+@TableName("users")
 @Data
-public class UserRefreshToken {
+public class User {
 
-    /** 主键 */
     @TableId(type = IdType.AUTO)
     private Long id;
-
-    /** 关联的用户 ID */
-    private Long userId;
-
-    /** token 唯一标识（UUID 去横线） */
-    private String tokenId;
-
-    /** token 哈希值,用于安全比对 */
-    private String tokenHash;
-
-    /** 过期时间 */
-    private LocalDateTime expiresAt;
-
-    /** 吊销时间,null 表示未吊销 */
-    private LocalDateTime revokedAt;
-
-    /** 创建时间 */
+    private String userCode;
+    private String username;
+    private String email;
+    private String displayName;
+    private String passwordHash;
+    private SystemRole systemRole;
+    private UserStatus status;
+    private Boolean mustChangePassword;
+    private LocalDateTime lastLoginAt;
     private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 }
-顺便解释一下为什么 refresh token 要专门存一张表,而不是也签成 JWT:
-
-Access token(JWT)的特点是"自包含、无状态"——服务器不用查数据库就能验证它合不合法,靠的是签名。但这个特点也是它的缺陷:一旦签发出去,在过期之前没法主动吊销(除非你专门再搞一套黑名单机制,那还不如干脆用数据库)。
-
-Refresh token 存活时间长(这里配的是 14 天),一旦泄露,风险比只活 30 分钟的 access token 大得多,所以必须支持"随时吊销"——比如用户点击"退出登录"、或者系统检测到异常要强制下线。存数据库、可以直接 UPDATE ... SET revoked_at = now() 就是最直接的解决方案。这也是为什么阶段①⑤都还没做,但数据库表你已经提前建好了。
-
-6. 新建 auth/mapper/UserRefreshTokenMapper.java
+第二步：UserMapper 加自定义查询方法
 java
-package com.example.myargus.auth.mapper;
+package com.example.myargus.user.mapper;
 
-import com.example.myargus.auth.model.entity.UserRefreshToken;
+import com.example.myargus.user.model.entity.User;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Update;
+
+import java.util.List;
+
+@Mapper
+public interface UserMapper extends BaseMapper<User> {
+
+    /** 登录时根据用户名或邮箱查找用户，加行锁 */
+    List<User> selectByLoginIdForUpdate(@Param("loginId") String loginId);
+}
+
+为什么这个方法要另外写 XML，而不是像 revokeByIdIfActive 那样用 @Update 注解？ 因为这条 SQL 需要 for update 行锁——登录时如果两个并发请求同时查同一个用户，加了行锁能防止竞态条件（比如同时触发"账号被禁用"之类的状态变更冲突）。这种带特殊语义、可能以后还要调整的查询，写成独立的 XML 文件比塞进注解字符串里更好维护，这也是 MyBatis 的两种映射方式并存的原因：简单 SQL 用注解，复杂/易变的 SQL 用 XML。
+
+新建 src/main/resources/mappers/UserMapper.xml（这个目录还不存在，需要新建，你的 application.yaml 已经配置了 mapper-locations: classpath*:/mappers/**/*.xml 去扫描它，不用改配置）：
+
+xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.myargus.user.mapper.UserMapper">
+
+    <!-- 登录时根据用户名或邮箱查找用户，加行锁 -->
+    <select id="selectByLoginIdForUpdate" resultType="com.example.myargus.user.model.entity.User">
+        select id, user_code, username, email, display_name, password_hash,
+               system_role, status, must_change_password
+        from users
+        where username = #{loginId} or email = #{loginId}
+        order by id
+        for update
+    </select>
+
+</mapper>
+
+namespace 必须和 Mapper 接口的完整类路径一模一样，MyBatis 就是靠这个把 XML 里的 SQL 和接口方法对应起来的——写错了不会报编译错误，而是运行时找不到方法，调试起来比较烦，所以照抄时这里要格外小心。
+
+第三步：新增 AdminUserItemResponse（VO）
+
+放在 user/model/vo/AdminUserItemResponse.java：
+
+java
+package com.example.myargus.user.model.vo;
+
+import com.example.myargus.common.enums.SystemRole;
+import com.example.myargus.common.enums.UserStatus;
 
 import java.time.LocalDateTime;
 
-@Mapper
-public interface UserRefreshTokenMapper extends BaseMapper<UserRefreshToken> {
-
-    /** 原子吊销:仅当 revoked_at 为 null 时才更新,返回受影响行数用于检测并发重放 */
-    @Update("update user_refresh_tokens set revoked_at = #{revokedAt} where id = #{id} and revoked_at is null")
-    int revokeByIdIfActive(@Param("id") Long id, @Param("revokedAt") LocalDateTime revokedAt);
+/**
+ * 管理员用户列表中的单条用户信息。
+ */
+public record AdminUserItemResponse(
+        Long userId,
+        String userCode,
+        String username,
+        String email,
+        String displayName,
+        SystemRole systemRole,
+        UserStatus status,
+        boolean mustChangePassword,
+        LocalDateTime lastLoginAt
+) {
 }
-这个 revokeByIdIfActive 方法为什么要写成"仅当 revoked_at 为 null 时才更新"而不是直接 update ... where id = ?:
 
-这是在防一种叫 "refresh token 重放攻击" 的场景:假设一个 refresh token 被黑客窃取了。正常用户和黑客几乎同时各拿着同一个 token 去请求"刷新令牌"接口。如果不做原子控制,两个请求可能都读到"这个 token 还没吊销",都各自成功刷新一次,黑客就这样静默拿到了新的合法 token,而你完全不知道。
+这是个 VO（View Object），专门给"返回给前端的数据"用，和 User 实体分开的原因是：User 里有 passwordHash 这种绝对不能返回给前端的字段，如果直接把实体序列化成 JSON 返回，一不小心就会把密码哈希也传出去。VO 只挑外部需要看到的字段，从设计上杜绝这类泄露。这个类现在虽然还用不上（要等做 user 模块管理员列表接口才用），但 UserQueryService 引用了它，所以先补上。
 
-用 where id = ? and revoked_at is null 这种写法,数据库层面保证了"多个并发请求里只有第一个能成功把 revoked_at 从 null 改成有值",后面的请求执行这条 SQL 时,revoked_at is null 这个条件已经不成立了,返回的受影响行数是 0。阶段④写 AuthService.refresh() 时你会看到:一旦发现"应该能吊销却没吊销成功"(返回 0),就直接判定为疑似重放攻击,把这个用户的所有 token 全部吊销,强制重新登录。
+第四步：UserQueryService
 
-MyBatis-Plus 的 BaseMapper 只提供通用的增删改查,像这种"带条件的原子更新"就得像这样自己写一条 @Update 原生 SQL——这跟你之前 UserMapper 继承 BaseMapper 的写法是完全一样的套路,只是多了一个自定义方法。
+放在 user/service/UserQueryService.java：
 
-你要做的事
-新建上面 5 个文件(PasswordHasher、AuthProperties、AuthConfiguration、UserRefreshToken、UserRefreshTokenMapper),追加 yaml 配置;
-编译一遍,确认没问题。
-这一步做完,应用应该还能正常启动(AuthConfiguration 会在启动时自动注册两个 bean,不需要谁调用它)。改完告诉我,阶段③开始写真正"签发/校验 JWT"和"管理 refresh token"的核心逻辑——这也是全流程里最有意思的一部分。
+java
+package com.example.myargus.user.service;
 
+import com.example.myargus.common.exception.BusinessException;
+import com.example.myargus.user.mapper.UserMapper;
+import com.example.myargus.user.model.entity.User;
+import com.example.myargus.user.model.vo.AdminUserItemResponse;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+
+/**
+ * 用户查询服务，提供对 users 表的通用查询。
+ */
+@Service
+public class UserQueryService {
+
+    private final UserMapper userMapper;
+
+    public UserQueryService(UserMapper userMapper) {
+        this.userMapper = userMapper;
+    }
+
+    /** 按 ID 升序返回所有用户 */
+    public List<AdminUserItemResponse> listUsers() {
+        List<User> users = userMapper.selectList(
+                new LambdaQueryWrapper<User>().orderByAsc(User::getId)
+        );
+        return users.stream().map(UserQueryService::toAdminVo).toList();
+    }
+
+    /** 按 ID 查询单个用户，不存在则抛出异常 */
+    public AdminUserItemResponse getUser(Long userId) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException("用户不存在");
+        }
+        return toAdminVo(user);
+    }
+
+    /** 判断用户名是否已存在 */
+    public boolean existsByUsername(String username) {
+        return userMapper.exists(
+                new LambdaQueryWrapper<User>().eq(User::getUsername, username)
+        );
+    }
+
+    /** 判断邮箱是否已存在 */
+    public boolean existsByEmail(String email) {
+        return userMapper.exists(
+                new LambdaQueryWrapper<User>().eq(User::getEmail, email)
+        );
+    }
+
+    /** 按 ID 查询单个用户，返回精简 record（供跨模块调用），不存在返回 null */
+    public UserRecord findById(Long userId) {
+        User user = userMapper.selectById(userId);
+        if (user == null) return null;
+        return new UserRecord(user.getId(), user.getUserCode(),
+                user.getDisplayName(), user.getSystemRole(),
+                user.getStatus(), Boolean.TRUE.equals(user.getMustChangePassword()));
+    }
+
+    /** 供跨模块查询的用户精简信息 */
+    public record UserRecord(
+            Long userId,
+            String userCode,
+            String displayName,
+            com.example.myargus.common.enums.SystemRole systemRole,
+            com.example.myargus.common.enums.UserStatus status,
+            boolean mustChangePassword
+    ) {}
+
+    /** 将 User 实体转为管理端 VO */
+    private static AdminUserItemResponse toAdminVo(User user) {
+        return new AdminUserItemResponse(
+                user.getId(),
+                user.getUserCode(),
+                user.getUsername(),
+                user.getEmail(),
+                user.getDisplayName(),
+                user.getSystemRole(),
+                user.getStatus(),
+                Boolean.TRUE.equals(user.getMustChangePassword()),
+                user.getLastLoginAt()
+        );
+    }
+}
+
+这里为什么又单独定义一个 UserRecord，跟第三步的 AdminUserItemResponse 看着很像？因为用途不同：AdminUserItemResponse 是给"管理员用户列表接口"这种前端场景用的 VO；UserRecord 是给其他后端模块（比如接下来要写的 CurrentUserService）内部调用用的精简数据。虽然字段有重叠，但让不同层各自定义自己需要的数据结构，比让所有地方共用一个类更灵活——以后如果管理端要多显示一个字段，只改 VO，不会牵连到内部调用逻辑。
+
+第五步：CurrentUserService
+
+注意这个类不在 auth.service 或 auth.security 子包里，而是直接放在 auth 包的根下：auth/CurrentUserService.java。这是参考项目的设计——它是整个 auth 模块对外的"门面"，其它模块（document、qa 等以后要做的模块）想知道"当前是谁在请求"，只需要注入这一个类，不需要关心 JWT、UserContext 这些内部实现细节，所以特意放在包的最外层，表示这是模块的公开入口。
+
+java
+package com.example.myargus.auth;
+
+import com.example.myargus.common.security.AuthenticatedUser;
+import com.example.myargus.common.security.UserContext;
+import com.example.myargus.common.enums.SystemRole;
+import com.example.myargus.common.enums.UserStatus;
+import com.example.myargus.common.exception.BusinessException;
+import com.example.myargus.common.exception.ForbiddenException;
+import com.example.myargus.common.exception.UnauthorizedException;
+import com.example.myargus.user.service.UserQueryService;
+import org.springframework.stereotype.Service;
+
+/**
+ * 当前用户服务，通过 {@link UserContext} 获取当前请求用户。
+ * <p>
+ * 依赖 JwtAuthenticationFilter 在请求进入时设置 {@link UserContext}。
+ */
+@Service
+public class CurrentUserService {
+
+    private final UserQueryService userQueryService;
+
+    public CurrentUserService(UserQueryService userQueryService) {
+        this.userQueryService = userQueryService;
+    }
+
+    /** 获取当前登录用户，未登录抛出 401 */
+    public CurrentUser getRequiredCurrentUser() {
+        AuthenticatedUser authenticatedUser = UserContext.get();
+        if (authenticatedUser != null) {
+            return loadUserById(authenticatedUser.userId());
+        }
+        throw new UnauthorizedException("当前请求未登录");
+    }
+
+    /** 要求当前用户为系统管理员，否则抛出 403 */
+    public CurrentUser requireSystemAdmin() {
+        CurrentUser currentUser = getRequiredCurrentUser();
+        if (currentUser.systemRole() != SystemRole.ADMIN) {
+            throw new ForbiddenException("当前用户不是系统管理员");
+        }
+        return currentUser;
+    }
+
+    /** 要求当前用户为业务用户（非管理员），否则抛出 403 */
+    public CurrentUser requireBusinessUser() {
+        CurrentUser currentUser = getRequiredCurrentUser();
+        if (currentUser.systemRole() == SystemRole.ADMIN) {
+            throw new ForbiddenException("系统管理员不能访问普通业务区");
+        }
+        return currentUser;
+    }
+
+    /** 从数据库加载用户并校验状态 */
+    private CurrentUser loadUserById(Long userId) {
+        UserQueryService.UserRecord user = userQueryService.findById(userId);
+        if (user == null) {
+            throw new BusinessException("当前用户不存在");
+        }
+        if (user.status() == UserStatus.DISABLED) {
+            throw new BusinessException("账号已被禁用");
+        }
+        return new CurrentUser(
+                user.userId(),
+                user.userCode(),
+                user.displayName(),
+                user.systemRole(),
+                user.mustChangePassword()
+        );
+    }
+
+    /** 当前登录用户信息 */
+    public record CurrentUser(
+            Long userId,
+            String userCode,
+            String displayName,
+            SystemRole systemRole,
+            boolean mustChangePassword
+    ) {
+        public CurrentUser(Long userId, String userCode, String displayName) {
+            this(userId, userCode, displayName, SystemRole.USER, false);
+        }
+    }
+}
+
+为什么明明 UserContext 已经存了 AuthenticatedUser（里面已经有 userId、displayName 等信息），这里还要 loadUserById 重新查一次数据库？ 因为 JWT 里的信息是登录那一刻的快照，是不实时的。如果用户在 token 有效期内被管理员禁用了账号，UserContext 里的 AuthenticatedUser 还是"启用"状态（因为 token 还没过期），但数据库里已经是 DISABLED 了。所以每次真正需要判断权限时，都重新查一次库，保证拿到的是最新状态——这是用一点点性能换安全性的常见取舍。
+
+这五步做完，user 模块和 CurrentUserService 就补齐了。你可以先跑一下 ./gradlew compileJava 确认这五个文件互相之间没有拼写/导入错误，跑通了告诉我，我们再回头写真正的 AuthService（登录、注册、刷新令牌、登出的完整业务逻辑）。

@@ -1,7 +1,7 @@
 package com.example.myargus.user.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.example.myargus.user.entity.User;
+import com.example.myargus.user.model.entity.User;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
