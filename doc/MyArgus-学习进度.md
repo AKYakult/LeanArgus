@@ -21,100 +21,101 @@
 
 ## 整体路线图
 
-1. ✅ 项目骨架打通：依赖配置 + 数据库连接 + schema 自动建表[cite: 2]
-2. ✅ `User` 实体 + Mapper（MyBatis-Plus），测试接口验证通过[cite: 2]
-3. 🟡 密码加密 + 基础设施（统一响应与全局异常） + 用户注册逻辑（进行中）
-  - ✅ 注册 `PasswordEncoder` (BCrypt)[cite: 2, 5]
-  - ✅ 基于 Java Record 封装统一响应体 `ApiResponse<T>`[cite: 5]
-  - ✅ 建立 `common.exception` 异常体系与 `GlobalExceptionHandler`[cite: 5]
-  - ✅ 编写 `RegisterRequest` DTO（带 Bean Validation 注解）[cite: 5]
-  - ⬜ 编写 `PasswordHasher` + `PasswordPolicyValidator`
-  - ⬜ 编写 `AuthService` 实现注册逻辑（查重、加密、写库）
-  - ⬜ 编写 `AuthController` 暴露 `POST /api/auth/register` 接口并进行 Postman 验证
-4. ⬜ 登录接口：校验用户名密码，返回 JWT
-5. ⬜ JWT 工具类：签发 token、解析 token（基于 JJWT 0.12.x）
-6. ⬜ `JwtAuthenticationFilter`：拦截请求、解析 token、注入全局当前用户上下文（`UserContext`）
-7. ⬜ 受保护接口 `/me`，验证整条鉴权拦截闭环链路
-8. ⬜（可选）刷新令牌（Refresh Token）、角色权限校验拓展
+1. ✅ 项目骨架打通：依赖配置 + 数据库连接 + schema 自动建表
+2. ✅ `User` 实体 + Mapper（MyBatis-Plus），测试接口验证通过
+3. ✅ 密码加密 + 基础设施 + 用户注册逻辑全链路
+   - ✅ 注册 `PasswordEncoder` (BCrypt)
+   - ✅ 基于 Java 21 Record 封装统一响应体 `ApiResponse<T>`
+   - ✅ 建立 `common.exception` 异常体系与 `GlobalExceptionHandler`
+   - ✅ 编写 `RegisterRequest` DTO（带 Bean Validation 注解）
+   - ✅ 编写 `PasswordHasher` + `PasswordPolicyValidator`
+   - ✅ 编写 `AuthService.register()`（校验格式、排重、BCrypt 哈希、落库）
+   - ✅ 编写 `AuthController` 暴露 `POST /api/auth/register`
+4. ✅ 登录接口与双 Token 签发（`POST /api/auth/login`）
+   - ✅ 编写 `LoginRequest` DTO 与 `AuthTokensResponse` VO
+   - ✅ `AuthService.login()`：行锁防竞态、支持用户名/邮箱登录、校验状态与密码
+5. ✅ 令牌服务与防重放机制
+   - ✅ `JwtAccessTokenService`（JJWT 0.12.x 规范签发与解析）
+   - ✅ `RefreshTokenService`（UUID 生成、BCrypt 哈希持久化、吊销控制）
+   - ✅ Refresh Token 轮转与重放攻击检测（撤销失败立即级联吊销全部 Token）
+6. ✅ `JwtAuthenticationFilter`：手写无状态拦截 + 白名单 + `UserContext` 注入
+   - ✅ 继承 `OncePerRequestFilter`，精准解析 Header Bearer Token
+   - ✅ 绑定 `UserContext`（`ThreadLocal<AuthenticatedUser>`）
+   - ✅ `finally` 严格清理上下文，杜绝线程池污染与内存泄漏
+7. ✅ 受保护接口 `/api/auth/me` 与用户态强校验
+   - ✅ `CurrentUserService`：结合 Token 身份与数据库实时状态（防封禁逃逸）
+   - ✅ 暴露 `GET /api/auth/me` 并返回 `CurrentUserProfileResponse`
+8. ✅ 安全 Cookie 管理与登出（`POST /api/auth/refresh` & `POST /api/auth/logout`）
+   - ✅ `AuthCookieSupport`：将 Refresh Token 封装为 `httpOnly` + `SameSite=Lax` Cookie
+   - ✅ 登出原子吊销 Refresh Token 并清除客户端 Cookie
+9. 🟡 **当前阶段**：端到端全链路接口联调与 Postman 验证
+10. ⬜ **下一阶段**：知识库群组与成员权限管理（`group` 模块）
 
 ---
 
 ## 当前已完成详情
 
-### Step 1：项目骨架与数据库连接[cite: 2]
-- `build.gradle.kts` 配置完整：涵盖 web、validation、lombok、`spring-security-crypto`、jjwt 0.12.6、`mybatis-plus-spring-boot4-starter`、postgresql 驱动[cite: 2]。
-- `application.yaml` 配置 PostgreSQL 数据源，配合 `schema_temp.sql` 自动建表（`users` + `user_refresh_tokens`）[cite: 2, 5]。
+### Step 1：项目骨架与数据库连接
+- `build.gradle.kts` 配置完整：涵盖 web、validation、lombok、`spring-security-crypto`、jjwt 0.12.6、`mybatis-plus-spring-boot4-starter`、postgresql 驱动。
+- `application.yaml` 配置 PostgreSQL 数据源，配合 Docker Compose 部署的 PostgreSQL 18 + PGvector 实例。
 
-### Step 2：User 实体与数据访问层[cite: 2]
-- 模块包分层：`com.example.myargus.user`[cite: 2, 5]。
-- `User` 实体完整映射 `users` 表字段，`UserMapper` 继承 MyBatis-Plus 的 `BaseMapper<User>`[cite: 2, 5]。
-- 通过 `/test/users` 测试接口完成数据库连通性及 CRUD 读写验证[cite: 2, 5]。
+### Step 2：User 实体与数据访问层
+- 模块包分层：`com.example.myargus.user`。
+- `User` 实体完整映射 `users` 表字段，`UserMapper` 继承 MyBatis-Plus 的 `BaseMapper<User>`。
+- `UserQueryService` 封装基础只读查询与用户查重逻辑，返回只读 `UserRecord` 防止敏感字段外泄。
 
-### Step 3（前半部分）：通用基础设施与入参规范[cite: 5]
-- **统一响应封装 (`common.api.ApiResponse<T>`)**[cite: 5]：
-  - 基于 Java 21 Record 特性定义[cite: 2, 5]：
-    ```java
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record ApiResponse<T>(boolean success, T data, String message){}
-    ```
-  - 提供 `ApiResponse.ok(data)`、`ApiResponse.ok()` 与 `ApiResponse.error(msg)` 静态工厂方法[cite: 5]。
-- **全局异常拦截体系 (`common.exception`)**[cite: 5]：
-  - 定义 `BusinessException` (400)、`UnauthorizedException` (401)、`ForbiddenException` (403)[cite: 5]。
-  - 实现 `GlobalExceptionHandler`，完整覆盖自定义业务异常、参数校验（`MethodArgumentNotValidException`）、JSON 格式反序列化异常（`HttpMessageNotReadableException`）、文件大小超限异常（`MaxUploadSizeExceededException`）以及 500 系统未知兜底异常[cite: 5]。
-- **安全配置与 DTO**[cite: 5]：
-  - `common.config.SecurityConfig` 注册 `BCryptPasswordEncoder`[cite: 5]。
-  - `auth.model.dto.RegisterRequest` 配置 `@NotBlank` 与 `@Size` 约束注解[cite: 5]。
+### Step 3：通用基础设施、安全配置与注册
+- **统一响应封装 (`common.api.ApiResponse<T>`)**：Java 21 Record 定义，支持泛型与静态工厂方法。
+- **全局异常拦截 (`common.exception.GlobalExceptionHandler`)**：覆盖 `BusinessException` (400)、`UnauthorizedException` (401)、`ForbiddenException` (403)、`MethodArgumentNotValidException` 等。
+- **密码加密与策略**：
+  - `PasswordHasher`：隔离 BCrypt 细节。
+  - `PasswordPolicyValidator`：长度与字符复杂度校验。
+- **用户注册**：`AuthService.register()` + `AuthController.register()`，规范用户名、排重并安全入库。
 
----
+### Step 4 & 5：双 Token 架构、登录与防重放
+- **JJWT 0.12.x 规范**：`JwtAccessTokenService` 签发 HMAC-SHA256 签名的 Access Token（有效 30 分钟），支持逆向解析与过期判定。
+- **持久化刷新令牌**：`RefreshTokenService` 与 `UserRefreshTokenMapper`，将 Refresh Token 哈希后落库 `user_refresh_tokens`。
+- **高安全登录**：`AuthService.login()` 采用 `SELECT ... FOR UPDATE` 行锁，支持多设备登录与旧令牌清理。
+- **防重放攻击（Replay Attack Protection）**：刷新令牌时执行单次原子吊销；若旧 Token 已被使用，判定为凭据泄露，强制吊销该用户所有活跃会话。
 
-## 缺少的组件与详细待办清单
+### Step 6 & 7：手写 JWT Filter、UserContext 与 /me 端点
+- **上下文管理 (`UserContext`)**：基于 `ThreadLocal<AuthenticatedUser>` 存储当前请求用户，提供静态存取。
+- **拦截器 (`JwtAuthenticationFilter`)**：
+  - 继承 `OncePerRequestFilter`，重写 `shouldNotFilter` 配置公开端点白名单。
+  - 校验 Bearer Token 并在请求进入 Controller 前绑定上下文。
+  - 严格通过 `finally { UserContext.clear(); }` 避免线程复用造成的内存泄漏或身份串号。
+- **受保护端点**：`GET /api/auth/me` 经由 `CurrentUserService` 实时比对数据库用户状态（`ACTIVE` / `DISABLED`），确保被禁用户即便持有未过期 JWT 也无法调用业务。
 
-为了从当前状态推进并完成整个登录认证与受保护接口拦截闭环，仍需补充以下文件：
-
-### 阶段一：补齐用户注册业务（Step 3 完结）
-
-1. **`auth/service/PasswordHasher.java`**
-  - **职责**：封装 `BCryptPasswordEncoder`，提供统一的 `hash(rawPassword)` 和 `matches(raw, encoded)` 工具方法，隔离底层加密实现细节。
-2. **`auth/service/PasswordPolicyValidator.java`**
-  - **职责**：实现密码安全策略校验（校验密码长度 6-32 位、字符复杂度等），不符合规则时直接抛出 `BusinessException`。
-3. **`auth/service/AuthService.java`**
-  - **职责**：认证核心服务类，实现 `register(RegisterRequest req)` 方法。执行密码合规检查 -> MyBatis-Plus 检查用户名唯一性 -> 密码加密 -> 赋予默认角色（`USER`）与状态（`ACTIVE`） -> 插入数据库。
-4. **`auth/controller/AuthController.java`**
-  - **职责**：认证控制层，暴露 `POST /api/auth/register`，使用 `@Valid` 激活入参校验并统一返回 `ApiResponse.ok()`。
+### Step 8：安全 Cookie 与登出闭环
+- **`AuthCookieSupport`**：将 Refresh Token 写入 `httpOnly` + `SameSite=Lax` Cookie，杜绝 XSS 窃取风险。
+- **登出流程**：`POST /api/auth/logout` 清理数据库持久化 Token 并通过响应头 `Max-Age=0` 清空浏览器 Cookie。
 
 ---
 
-### 阶段二：登录接口与 JWT 签发（Step 4 & Step 5）
+## 下一步核心待办清单
 
-1. **`auth/model/dto/LoginRequest.java`**
-  - **职责**：登录接口入参 DTO，包含 `username` 与 `password` 字段校验。
-2. **`auth/model/vo/AuthTokensResponse.java`**
-  - **职责**：登录成功出参 VO，封装 `accessToken`、`tokenType` ("Bearer") 以及过期时间等字段。
-3. **`auth/security/JwtAccessTokenService.java`**
-  - **职责**：基于 **JJWT 0.12.x** API 封装令牌管理：
-    - 从 `application.yaml` 读取 `jwt.secret` 与 `jwt.expiration` 配置。
-    - `generateToken(User user)`：将 `userId`、`username`、`role` 放入 Claims 并使用 HMAC-SHA256 签名生成 Access Token。
-    - `parseToken(String token)`：解析并校验 Token 的有效性、签名真实性与过期时间；校验失败时抛出 `UnauthorizedException`。
-4. **扩展 `AuthService` 与 `AuthController`**
-  - 在 `AuthService` 中实现 `login(LoginRequest req)`：验证用户是否存在 -> `passwordHasher.matches` 校验密码 -> 调用 `JwtAccessTokenService` 签发 Token 并返回。
-  - 在 `AuthController` 中新增 `POST /api/auth/login` 路由。
+认证鉴权核心模块已全部完成编码并编译通过，接下来聚焦于联调与下一模块拓展：
 
----
+### 阶段一：端到端接口联调验证（进行中）
+1. **启动容器与服务**：
+   - 运行 `docker compose up -d` 确保 PostgreSQL 启动。
+   - 运行 `./gradlew bootRun` 启动应用。
+2. **Postman / Curl 顺序测试流**：
+   - `POST /api/auth/register`：测试合法注册、重名检测、密码强度校验。
+   - `POST /api/auth/login`：验证登录成功返回 Access Token，并检查响应头是否正确下发 `Set-Cookie: MYARGUS_REFRESH_TOKEN=...`。
+   - `GET /api/auth/me`：
+     - 不带 Authorization 头，验证是否返回 401。
+     - 携带 Bearer Token，验证是否正确返回当前用户画像。
+   - `POST /api/auth/refresh`：带 Cookie 刷新，验证新 Access Token 生成及旧 Refresh Token 吊销。
+   - `POST /api/auth/logout`：验证退出后 Cookie 清除且 Refresh Token 状态变为 revoked。
 
-### 阶段三：无状态鉴权过滤器与用户上下文注入（Step 6 & Step 7）
-
-1. **`common/security/AuthenticatedUser.java`**
-  - **职责**：当前登录用户的数据载体（POJO/Record），包含 `Long userId`、`String username`、`String systemRole` 等轻量身份信息。
-2. **`common/security/UserContext.java`**
-  - **职责**：基于 `ThreadLocal<AuthenticatedUser>` 封装全局用户上下文，提供 `set(user)`、`get()`、`clear()` 静态方法，使后续业务模块无需传参即可随处获取当前登录用户。
-3. **`auth/security/JwtAuthenticationFilter.java`**
-  - **职责**：继承 `OncePerRequestFilter` 实现纯手写拦截器：
-    - 检查 HTTP 请求头的 `Authorization` 字段是否以 `Bearer ` 开头。
-    - 提取 Token 并调用 `JwtAccessTokenService.parseToken()`。
-    - 将解析出来的用户信息封装为 `AuthenticatedUser` 存入 `UserContext`。
-    - 在 `finally` 块中调用 `UserContext.clear()`，防止线程池复用导致的上下文污染与内存泄漏。
-4. **`common/config/FilterConfig.java`**
-  - **职责**：使用 `FilterRegistrationBean` 将 `JwtAuthenticationFilter` 注册进 Servlet 容器，并配置路径映射及白名单放行策略（如放行 `/api/auth/login`、`/api/auth/register`、`/test/**`）。
-5. **受保护接口测试验证 (`/api/auth/me`)**
-  - **`auth/model/vo/CurrentUserProfileResponse.java`**：用户信息展示 VO。
-  - 在 `AuthController` 中新增受保护接口 `GET /api/auth/me`，直接从 `UserContext.get()` 提取登录信息并返回，完成全链路验证。
+### 阶段二：开启知识库群组模块（`group` 模块研发）
+参考 `Argus` 系统架构，推进下一核心领域模型：
+1. **数据实体与 Mapper**：
+   - `Group`（对应 `groups` 表，知识库空间）。
+   - `GroupMembership`（对应 `group_memberships` 表，成员与 `OWNER` / `MEMBER` 权限）。
+   - `GroupInvitation`（对应 `group_invitations` 表，邀请流程）。
+   - `GroupJoinRequest`（对应 `group_join_requests` 表，申请加入审批流程）。
+2. **群组业务与权限服务**：
+   - 创建群组、转让群主、成员权限校验（基于 `UserContext` 获取当前用户）。
+   - 邀请/申请流转状态机（`PENDING` -> `ACCEPTED` / `REFUSED` / `CANCELLED`）。

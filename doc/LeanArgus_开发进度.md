@@ -1,6 +1,6 @@
 # LeanArgus 后端开发进度
 
-> 更新时间：2026-09-03
+> 更新时间：2026-09-07
 >
 > 目标：严格参考 `Argus` 完整参考项目，逐步完成 `LeanArgus` 后端。当前 Java/Spring 不熟悉，因此每一步同时记录“做什么”和“为什么”。
 
@@ -30,21 +30,29 @@ com.example.myargus
 │   ├── config
 │   │   ├── AuthConfiguration
 │   │   └── AuthProperties
+│   ├── controller
+│   │   └── AuthController           ← 新增（已完成，暴露 /api/auth/*）
 │   ├── mapper
 │   │   └── UserRefreshTokenMapper
 │   ├── model
 │   │   ├── dto
 │   │   │   ├── LoginRequest
 │   │   │   └── RegisterRequest
-│   │   └── entity
-│   │       └── UserRefreshToken
+│   │   ├── entity
+│   │   │   └── UserRefreshToken
+│   │   └── vo
+│   │       ├── AuthTokensResponse       ← 新增（已完成）
+│   │       └── CurrentUserProfileResponse ← 新增（已完成）
 │   ├── security
 │   │   ├── JwtAccessTokenService
-│   │   └── RefreshTokenService
+│   │   ├── RefreshTokenService
+│   │   ├── AuthCookieSupport
+│   │   └── JwtAuthenticationFilter  ← 新增（已完成，手写请求拦截与上下文绑定）
 │   └── service
 │       ├── PasswordHasher
 │       ├── PasswordPolicyValidator
-│       └── RefreshTokenRecord
+│       ├── RefreshTokenRecord
+│       └── AuthService              ← 已完成（login/register/refresh/logout）
 │
 ├── common
 │   ├── api
@@ -55,6 +63,8 @@ com.example.myargus
 │       └── UserContext
 │
 └── user
+    ├── controller
+    │   └── UserTestController
     ├── mapper
     │   └── UserMapper
     ├── model
@@ -66,7 +76,7 @@ com.example.myargus
         └── UserQueryService
 ```
 
-> 以上表示目前已经建立/实现的主要结构，不代表整个认证链路已经完整联通。
+> 以上表示目前已经建立/实现的完整结构。认证链路（Service + Controller + Filter + Cookie 支持）已全量完成并通过编译，待本地运行全链路联调验证。
 
 ## 3. 已完成：common
 
@@ -373,6 +383,109 @@ BusinessException("当前用户不存在")
 BusinessException("账号已被禁用")
 ```
 
+## 6.5 已完成：`auth.service.AuthService`（本次新增）
+
+登录、注册、刷新令牌、登出的核心业务逻辑已全部实现，并配套了 `AuthCookieSupport` 处理 refresh token 的 Cookie 读写。
+
+### `login(loginId, password)`
+
+```text
+LoginRequest
+    ↓
+校验 loginId / password 格式
+    ↓
+按用户名或邮箱查询用户（SELECT ... FOR UPDATE 加行锁）
+    ↓
+校验账号状态（DISABLED 拒绝）
+    ↓
+校验密码（BCrypt matches）
+    ↓
+撤销该用户所有旧 refresh token
+    ↓
+签发新 access token（JWT）
+    ↓
+签发新 refresh token
+    ↓
+更新 lastLoginAt
+    ↓
+返回 AuthTokens
+```
+
+要点：
+- 用 `SELECT ... FOR UPDATE` 防止并发登录时的竞态。
+- 增加了“登录标识匹配到多个用户”的兜底校验（`ensureUniqueLoginMatch`），避免脏数据导致越权。
+- 密码长度做了双重限制：普通长度上限 + BCrypt 72 字节截断保护。
+
+### `register(RegisterRequest)`
+
+```text
+RegisterRequest
+    ↓
+用户名归一化 + 合法字符校验（仅允许字母数字下划线短横线）
+    ↓
+排除保留用户名（admin/root/system 等）
+    ↓
+邮箱 / displayName 长度校验
+    ↓
+密码策略校验（PasswordPolicyValidator）
+    ↓
+检查用户名、邮箱唯一性
+    ↓
+密码 hash（BCrypt）
+    ↓
+写入 users（默认 USER 角色 / ACTIVE 状态）
+```
+
+### `refresh(refreshToken)`
+
+```text
+refreshToken
+    ↓
+查找有效 token 记录
+    ↓
+查询用户 + 状态校验
+    ↓
+撤销旧 token（原子操作）
+    ↓
+撤销失败 → 判定为重放攻击 → 撤销该用户全部 token，要求重新登录
+    ↓
+撤销成功 → 签发新的 access token + refresh token
+```
+
+要点：这里专门处理了 **refresh token 重放攻击**：如果撤销旧 token 失败（说明已经被用过一次），会连带撤销该用户全部 token，强制重新登录。
+
+### `logout(refreshToken)`
+
+```text
+refreshToken
+    ↓
+撤销该 token
+```
+
+#### `AuthCookieSupport`
+
+负责把 refresh token 写入/清除为 `httpOnly` + `SameSite=Lax` 的 Cookie（生产环境应为 `Secure`），避免前端 JS 直接接触 refresh token。
+
+## 6.6 已完成：`auth.controller.AuthController` 与 `auth.security.JwtAuthenticationFilter`（本次新增）
+
+认证控制层与纯手写 JWT 认证拦截器已全部实现，并已通过编译。
+
+### `AuthController`
+暴露 5 个核心端点：
+- `POST /api/auth/register`：用户注册，入参使用 `@Valid` 激活 Bean Validation，统一返回 `ApiResponse.ok()`。
+- `POST /api/auth/login`：用户登录，成功后调用 `AuthCookieSupport` 将 refresh token 写入 httpOnly Cookie，并返回包含 `accessToken` 的 `AuthTokensResponse`。
+- `POST /api/auth/refresh`：刷新令牌，自动从 Request Cookie 读取 refresh token 并调用 `AuthService.refresh()`，新 refresh token 回写 Cookie，返回新 access token。
+- `POST /api/auth/logout`：用户登出，从 Request Cookie 提取 refresh token 进行后端注销，并调用 `AuthCookieSupport.clearRefreshTokenCookie()` 清除浏览器 Cookie。
+- `GET /api/auth/me`：受保护接口，调用 `CurrentUserService.getRequiredCurrentUser()` 获取当前登录用户画像，返回 `CurrentUserProfileResponse`。
+
+### `JwtAuthenticationFilter`
+继承 Spring 的 `OncePerRequestFilter`，实现纯手写无状态拦截：
+1. **白名单策略**：通过重写 `shouldNotFilter()` 放行 `/api/auth/login`、`/api/auth/register`、`/api/auth/refresh`、`/api/auth/logout` 等非受保护路由。
+2. **Token 解析**：从 `Authorization` 请求头提取 `Bearer <token>`，调用 `JwtAccessTokenService.parse()` 解码并验证签名。
+3. **上下文绑定**：将解析出的用户身份封装为 `AuthenticatedUser`，存入 `UserContext`（`ThreadLocal`）。
+4. **生命周期清理**：在 `finally` 块中调用 `UserContext.clear()`，防止 Tomcat 线程池复用导致上下文污染和内存泄漏。
+5. **未授权响应**：遇到格式错误或过期的 Token，直接使用 `ObjectMapper` 写回 401 统一响应 `ApiResponse<>(false, null, msg)`。
+
 ## 7. 当前最重要的认证链路
 
 ```text
@@ -385,7 +498,7 @@ BusinessException("账号已被禁用")
                        JWT
                          │
                          ↓
-             JwtAuthenticationFilter
+             JwtAuthenticationFilter        ← 已完成实现
                          │
                          ↓
                 AuthenticatedUser
@@ -394,16 +507,16 @@ BusinessException("账号已被禁用")
                   UserContext
                          │
                          ↓
-              CurrentUserService
+               CurrentUserService
                          │
                          ↓
-                UserQueryService
+                 UserQueryService
                          │
                          ↓
-                   UserMapper
+                    UserMapper
                          │
                          ↓
-                   PostgreSQL
+                    PostgreSQL
 ```
 
 三个核心概念：
@@ -473,103 +586,56 @@ ACTIVE   → 继续
 
 ## 9. 目前已经涉及的 Java/Spring 知识
 
-- `@Service`
-- Spring Bean
-- 构造器依赖注入
+- `@Service` / `@RestController` / `@Component`
+- Spring Bean 与依赖注入
 - MyBatis-Plus `BaseMapper`
-- `LambdaQueryWrapper`
-- `ThreadLocal`
-- Java `record`
-- DTO / Entity / VO
+- `LambdaQueryWrapper` / `LambdaUpdateWrapper`
+- `ThreadLocal` 与请求上下文
+- Java 21 `record` 与不可变 DTO/VO
+- DTO / Entity / VO 分层隔离
 - Service / Mapper 分层
-- JWT
-- Access Token
-- Refresh Token
-- HTTP 401 / 403
-- 用户状态与系统角色
-- 数据库查询与业务层分离
+- JJWT 0.12.x 签发与解析
+- Access Token / Refresh Token 双令牌机制
+- HTTP 401 Unauthorized / 403 Forbidden 语义规范
+- 用户状态与系统角色权限
+- 数据库查询与业务逻辑分离
+- `@Transactional` 与事务边界
+- 行级锁 `SELECT ... FOR UPDATE`
+- Refresh Token 轮转与重放攻击检测
+- httpOnly Cookie 传递与 XSS 防护
+- `OncePerRequestFilter` 纯手写无状态过滤器
 
-## 10. 下一步：`AuthService`
+## 10. 下一步：本地运行与 Postman 全链路联调测试
 
-下一步严格参考完整 `Argus` 项目实现：
+`auth` 模块的代码（实体、Mapper、Service、Controller、Filter、VO/DTO）已全部编写完毕并通过编译。下一步推荐进行端到端全链路接口联调：
 
-```text
-auth/service/AuthService.java
+### 1. 环境准备
+```bash
+# 1. 启动数据库容器
+docker compose up -d
+
+# 2. 启动后端应用
+./gradlew bootRun
 ```
 
-这是目前认证模块中比较复杂的一步。
+### 2. 联调测试路径
+1. **注册测试**：`POST /api/auth/register`
+   - Body: `{"username": "testuser", "password": "Password123!", "email": "test@example.com", "displayName": "Test User"}`
+   - 验证：返回 `{"success": true}`，数据库 `users` 产生一条新记录。
+2. **登录测试**：`POST /api/auth/login`
+   - Body: `{"loginId": "testuser", "password": "Password123!"}`
+   - 验证：返回 `accessToken`，且响应头包含 `Set-Cookie: MYARGUS_REFRESH_TOKEN=...; HttpOnly; Path=/api/auth`。
+3. **受保护端点访问**：`GET /api/auth/me`
+   - 不带 Token：验证是否返回 401。
+   - 带 Header `Authorization: Bearer <accessToken>`：验证是否正确返回当前用户画像。
+4. **刷新 Token**：`POST /api/auth/refresh`
+   - 携带 Cookie 请求，验证是否签发新 `accessToken`，旧 Refresh Token 是否被原子吊销。
+5. **登出测试**：`POST /api/auth/logout`
+   - 验证数据库中该 Refresh Token 被标记 `revoked_at`，响应头中 Cookie 被清空（`Max-Age=0`）。
 
-### 登录
-
-```text
-LoginRequest
-    ↓
-AuthService
-    ↓
-查询用户
-    ↓
-验证密码
-    ↓
-检查账号状态
-    ↓
-撤销旧 Refresh Token
-    ↓
-生成 Access Token
-    ↓
-生成 Refresh Token
-    ↓
-返回登录结果
-```
-
-### 注册
-
-```text
-RegisterRequest
-    ↓
-AuthService
-    ↓
-检查 username
-    ↓
-检查 email
-    ↓
-密码策略检查
-    ↓
-密码 hash
-    ↓
-INSERT users
-```
-
-### Refresh Token
-
-```text
-Refresh Token
-    ↓
-验证
-    ↓
-查询数据库
-    ↓
-生成新的 Access Token
-```
-
-### Logout
-
-```text
-Logout
-    ↓
-撤销 Refresh Token
-```
-
-下一步重点解释：
-
-- `@Transactional`
-- 登录事务
-- Refresh Token 生命周期
-- 密码验证
-- JWT 生成
-- Access Token 与 Refresh Token 的区别
-- `SELECT ... FOR UPDATE` 的作用
-- 为什么需要数据库锁
-- 登录失败应该抛什么异常
+### 3. 下一业务模块规划
+认证全链路联调完毕后，按照 `Argus` 蓝图推进下一个核心业务模块：
+- **`group` 模块**：知识库群组管理（`groups` 表、`group_memberships` 表、群组创建/查询/邀请与加入审批流程）。
 
 ## 11. 当前状态总览
 
@@ -584,48 +650,42 @@ Logout
 | `auth.config` | 🟢 已建立 |
 | `auth.dto` | 🟢 已建立 |
 | `auth.mapper` | 🟢 已建立 |
-| `auth.security` | 🟢 基础服务已建立 |
+| `auth.security`（Jwt/RefreshToken/Cookie） | 🟢 已完成 |
 | `auth.service` 基础类 | 🟢 已建立 |
 | `auth.CurrentUserService` | 🟢 已完成 |
-| `auth.AuthService` | 🟡 **下一步** |
-| `auth.AuthController` | ⏳ 等 `AuthService` 后实现 |
-| `JwtAuthenticationFilter` | ⏳ 后续 |
-| `/api/auth/me` | ⏳ 后续 |
-| Controller | ⏳ 后续 |
-| group | ⏳ 后续 |
-| document | ⏳ 后续 |
-| ingestion | ⏳ 后续 |
-| engine | ⏳ 后续 |
-| qa | ⏳ 后续 |
-| assistant | ⏳ 后续 |
-| metrics | ⏳ 后续 |
+| `auth.AuthService` | 🟢 **已完成**（login/register/refresh/logout） |
+| `auth.AuthController` | 🟢 **已完成**（5 个核心端点就绪） |
+| `JwtAuthenticationFilter` | 🟢 **已完成**（已手写过滤与白名单） |
+| `auth.model.vo` | 🟢 已完成（AuthTokensResponse、CurrentUserProfileResponse） |
+| `/api/auth/me` | 🟢 代码已完成，待运行联调 |
+| 全链路接口联调验证 | 🟡 **下一步** |
+| group（群组与知识库） | ⏳ 下一阶段 |
+| document（文档管理） | ⏳ 后续 |
+| ingestion（ETL流水线） | ⏳ 后续 |
+| engine（混合检索） | ⏳ 后续 |
+| qa（知识库问答） | ⏳ 后续 |
+| assistant（AI助手） | ⏳ 后续 |
+| metrics（计量统计） | ⏳ 后续 |
 
 ## 12. 开发纪律
 
-每完成一个核心类，执行：
+每完成一个核心模块或阶段，执行：
 
 ```bash
 ./gradlew clean build
 ```
 
 如果编译失败：
-
 1. 先解决当前错误；
 2. 不继续堆新的业务代码；
 3. 编译通过后再进入下一步。
 
-当前不要提前实现后面的 Controller、Group、Document 等模块。
-
-**当前目标只有一个：把 `auth` 模块的认证链路按照参考项目完整跑通。**
+当前保持节奏，先跑通联调测试，再平稳推进 `group` 模块。
 
 ---
 
 ## 当前进度节点
 
-**已完成：`UserQueryService` → `AuthenticatedUser` / `UserContext` → `CurrentUserService`**
+**已完成：`UserQueryService` → `AuthenticatedUser` / `UserContext` → `CurrentUserService` → `AuthService` → `AuthController` + `JwtAuthenticationFilter`（auth 模块代码全量实现并通过编译）**
 
-**下一步：`AuthService`**
-
-当前不要跳到 Controller 或其他业务模块。
-
-下一步严格按照 `Argus` 参考项目检查并实现 `AuthService`，先把注册/登录核心业务逻辑搞清楚，再继续 JWT Filter 闭环。
+**下一步：启动本地环境，使用 Postman / HTTP 客户端进行 `/api/auth/*` 全链路端到端联调测试；随后开启 `group` 知识库模块。**
