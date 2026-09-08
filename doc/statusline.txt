@@ -1,0 +1,145 @@
+jin@192 LeanArgus % cat ~/.gemini/antigravity-cli/statusline.sh
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import sys
+import json
+import select
+import re
+import unicodedata
+
+def read_stdin_with_timeout(timeout=0.3):
+    try:
+        if select.select([sys.stdin], [], [], timeout)[0]:
+            content = sys.stdin.read()
+            if content.strip():
+                return json.loads(content)
+    except Exception:
+        pass
+    return {}
+
+def get_visible_width(s):
+    """准确计算包含 ANSI 颜色序列及东亚全角字符的字符串可见宽度"""
+    clean = re.sub(r'[[0-9;]*m', '', s)
+    w = 0
+    for ch in clean:
+        ea = unicodedata.east_asian_width(ch)
+        if ea in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+def format_tokens(n):
+    if n >= 1_000_000:
+        return f"{n/1_000_000:.1f}M"
+    elif n >= 1_000:
+        return f"{n/1_000:.1f}k"
+    return str(int(n))
+
+def format_time(seconds):
+    if seconds <= 0:
+        return ""
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    return f"{h}h{m}m" if h > 0 else f"{m}m"
+
+def main():
+    data = read_stdin_with_timeout(0.3)
+
+    # ANSI 样式 (无 emoji，纯文字高亮)
+    RESET, BOLD = "", ""
+    GREEN, YELLOW, RED = "", "", ""
+    CYAN, MAGENTA, BLUE, GRAY = "", "", "", ""
+
+    term_w = data.get("terminal_width", 100) or 100
+    sep = f"{GRAY} · {RESET}"
+
+    # 1. 状态 (纯文字，无 emoji/图标)
+    state = data.get("agent_state", "idle")
+    state_map = {
+        "idle": f"{GREEN}空闲{RESET}",
+        "thinking": f"{MAGENTA}思考中{RESET}",
+        "working": f"{YELLOW}执行中{RESET}",
+        "tool_use": f"{BLUE}工具调用{RESET}",
+        "initializing": f"{CYAN}初始化{RESET}",
+    }
+    state_str = state_map.get(state, f"{GRAY}{state}{RESET}")
+
+    # 2. 模型 (纯文字)
+    model = data.get("model", {})
+    m_name = model.get("display_name") or model.get("id") or "Gemini"
+    if term_w < 100:
+        m_name = m_name.replace(" (High)", "").replace(" (Low)", "")
+    if term_w < 80:
+        m_name = m_name.replace("Gemini ", "G-")
+    model_str = f"{CYAN}{BOLD}{m_name}{RESET}"
+
+    # 3. 上下文用量 (Token + 百分比 + 进度条)
+    ctx = data.get("context_window", {})
+    total_in = ctx.get("total_input_tokens", 0)
+    total_out = ctx.get("total_output_tokens", 0)
+    total_tokens = total_in + total_out
+    ctx_limit = ctx.get("context_window_size", 1048576)
+    used_pct = ctx.get("used_percentage")
+    if used_pct is None:
+        used_pct = (total_tokens / ctx_limit * 100) if ctx_limit > 0 else 0.0
+
+    ctx_col = RED if used_pct > 80 else (YELLOW if used_pct > 50 else GREEN)
+
+    if term_w >= 85:
+        ctx_str = f"{ctx_col}{format_tokens(total_tokens)}/{format_tokens(ctx_limit)}-{used_pct:.1f}%{RESET}"
+    else:
+        ctx_str = f"{ctx_col}{format_tokens(total_tokens)}-{used_pct:.1f}%{RESET}"
+
+    # 4. 额度余额 (5小时配额、周配额、3P配额、账户余额等)
+    quota = data.get("quota", {}) or {}
+    quota_parts = []
+
+    if "gemini-5h" in quota and quota["gemini-5h"].get("remaining_fraction") is not None:
+        rem_5h = quota["gemini-5h"]["remaining_fraction"] * 100
+        q5_col = GREEN if rem_5h > 30 else (YELLOW if rem_5h > 15 else RED)
+        reset_s = quota["gemini-5h"].get("reset_in_seconds", 0)
+        reset_str = f"({format_time(reset_s)})" if (reset_s > 0 and term_w >= 105) else ""
+        quota_parts.append(f"{q5_col}5h: {rem_5h:.0f}%{reset_str}{RESET}")
+
+    if "gemini-weekly" in quota and quota["gemini-weekly"].get("remaining_fraction") is not None:
+        rem_wk = quota["gemini-weekly"]["remaining_fraction"] * 100
+        qw_col = GREEN if rem_wk > 30 else (YELLOW if rem_wk > 15 else RED)
+        quota_parts.append(f"{qw_col}week: {rem_wk:.0f}%{RESET}")
+
+    if "3p-5h" in quota and quota["3p-5h"].get("remaining_fraction") is not None:
+        if term_w >= 115 or len(quota_parts) < 2:
+            rem_3p = quota["3p-5h"]["remaining_fraction"] * 100
+            quota_parts.append(f"{CYAN}other: {rem_3p:.0f}%{RESET}")
+
+    credits = data.get("credits") or data.get("ai_credits")
+    if credits is not None:
+        quota_parts.append(f"{MAGENTA}余额: {credits}{RESET}")
+
+    if not quota_parts:
+        plan = data.get("plan_tier")
+        if plan:
+            quota_parts.append(f"{GREEN}计划: {plan}{RESET}")
+        else:
+            rem_ctx = ctx.get("remaining_percentage", 100.0 - used_pct)
+            quota_parts.append(f"{GREEN}余量: {rem_ctx:.1f}%{RESET}")
+
+    quota_str = sep.join(quota_parts)
+
+    # 组装主体 (以圆点作为分隔符)
+    parts = [state_str, model_str, ctx_str, quota_str]
+    raw_line = sep.join(parts)
+
+    # 整体靠右对齐计算
+    vis_w = get_visible_width(raw_line)
+    padding = max(0, term_w - vis_w - 1)
+    right_aligned_line = " " * padding + raw_line
+
+    print(right_aligned_line)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        # 即使遇到极端异常也以 0 退出，避免 TUI 报错
+        sys.exit(0)
