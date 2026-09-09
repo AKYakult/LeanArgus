@@ -466,27 +466,65 @@ refreshToken
 
 负责把 refresh token 写入/清除为 `httpOnly` + `SameSite=Lax` 的 Cookie（生产环境应为 `Secure`），避免前端 JS 直接接触 refresh token。
 
-## 6.6 已完成：`auth.controller.AuthController` 与 `auth.security.JwtAuthenticationFilter`（本次新增）
+## 6.6 已完成：`auth.controller.AuthController` 与 `auth.security.JwtAuthenticationFilter`
+ 
+ 认证控制层与纯手写 JWT 认证拦截器已全部实现，并已通过编译。
+ 
+ ### `AuthController`
+ 暴露 5 个核心端点：
+ - `POST /api/auth/register`：用户注册，入参使用 `@Valid` 激活 Bean Validation，统一返回 `ApiResponse.ok()`。
+ - `POST /api/auth/login`：用户登录，成功后调用 `AuthCookieSupport` 将 refresh token 写入 httpOnly Cookie，并返回包含 `accessToken` 的 `AuthTokensResponse`。
+ - `POST /api/auth/refresh`：刷新令牌，自动从 Request Cookie 读取 refresh token 并调用 `AuthService.refresh()`，新 refresh token 回写 Cookie，返回新 access token。
+ - `POST /api/auth/logout`：用户登出，从 Request Cookie 提取 refresh token 进行后端注销，并调用 `AuthCookieSupport.clearRefreshTokenCookie()` 清除浏览器 Cookie。
+ - `GET /api/auth/me`：受保护接口，调用 `CurrentUserService.getRequiredCurrentUser()` 获取当前登录用户画像，返回 `CurrentUserProfileResponse`。
+ 
+ ### `JwtAuthenticationFilter`
+ 继承 Spring 的 `OncePerRequestFilter`，实现纯手写无状态拦截：
+ 1. **白名单策略**：通过重写 `shouldNotFilter()` 放行 `/api/auth/login`、`/api/auth/register`、`/api/auth/refresh`、`/api/auth/logout` 等非受保护路由。
+ 2. **Token 解析**：从 `Authorization` 请求头提取 `Bearer <token>`，调用 `JwtAccessTokenService.parse()` 解码并验证签名。
+ 3. **上下文绑定**：将解析出的用户身份封装为 `AuthenticatedUser`，存入 `UserContext`（`ThreadLocal`）。
+ 4. **生命周期清理**：在 `finally` 块中调用 `UserContext.clear()`，防止 Tomcat 线程池复用导致上下文污染和内存泄漏。
+ 5. **未授权响应**：遇到格式错误或过期的 Token，直接使用 `ObjectMapper` 写回 401 统一响应 `ApiResponse<>(false, null, msg)`。
+ 
+## 6.7 已完成：`group` 模块基础设施、模型、Mapper 与权限守卫服务（本次新增）
 
-认证控制层与纯手写 JWT 认证拦截器已全部实现，并已通过编译。
+严格对照原版 `Argus-backend` 的设计模式，已完成群组全套底层数据基础设施，并 100% 通过编译。
 
-### `AuthController`
-暴露 5 个核心端点：
-- `POST /api/auth/register`：用户注册，入参使用 `@Valid` 激活 Bean Validation，统一返回 `ApiResponse.ok()`。
-- `POST /api/auth/login`：用户登录，成功后调用 `AuthCookieSupport` 将 refresh token 写入 httpOnly Cookie，并返回包含 `accessToken` 的 `AuthTokensResponse`。
-- `POST /api/auth/refresh`：刷新令牌，自动从 Request Cookie 读取 refresh token 并调用 `AuthService.refresh()`，新 refresh token 回写 Cookie，返回新 access token。
-- `POST /api/auth/logout`：用户登出，从 Request Cookie 提取 refresh token 进行后端注销，并调用 `AuthCookieSupport.clearRefreshTokenCookie()` 清除浏览器 Cookie。
-- `GET /api/auth/me`：受保护接口，调用 `CurrentUserService.getRequiredCurrentUser()` 获取当前登录用户画像，返回 `CurrentUserProfileResponse`。
+### 1. 数据库持久层（PostgreSQL）
+已在 Docker 容器数据库 `argus-pg` 中初始化并验证了群组领域的 4 张表：
+- `groups`：群组/知识库主表（包含 `group_code`、`owner_user_id`、`status`）。
+- `group_memberships`：成员关系表（包含 `groupId`、`userId`、`role`：`OWNER`/`MEMBER`）。
+- `group_invitations`：群组邀请流转表（邀请人、被邀请人、状态机 `PENDING`/`ACCEPTED`/`REJECTED`/`CANCELED`）。
+- `group_join_requests`：加入申请流转表（申请人、审批人、状态机 `PENDING`/`APPROVED`/`REJECTED`/`CANCELED`）。
 
-### `JwtAuthenticationFilter`
-继承 Spring 的 `OncePerRequestFilter`，实现纯手写无状态拦截：
-1. **白名单策略**：通过重写 `shouldNotFilter()` 放行 `/api/auth/login`、`/api/auth/register`、`/api/auth/refresh`、`/api/auth/logout` 等非受保护路由。
-2. **Token 解析**：从 `Authorization` 请求头提取 `Bearer <token>`，调用 `JwtAccessTokenService.parse()` 解码并验证签名。
-3. **上下文绑定**：将解析出的用户身份封装为 `AuthenticatedUser`，存入 `UserContext`（`ThreadLocal`）。
-4. **生命周期清理**：在 `finally` 块中调用 `UserContext.clear()`，防止 Tomcat 线程池复用导致上下文污染和内存泄漏。
-5. **未授权响应**：遇到格式错误或过期的 Token，直接使用 `ObjectMapper` 写回 401 统一响应 `ApiResponse<>(false, null, msg)`。
+### 2. 模型层（Entity / DTO / VO）
+- **实体（Entity）**：`Group`、`GroupMembership`、`GroupInvitation`、`GroupJoinRequest`。
+- **请求（DTO）**：
+  - `CreateGroupRequest`：创建群组（带 Bean Validation `@NotBlank` / `@Size` 约束）。
+  - `CreateInvitationRequest`：创建群组邀请。
+- **响应（VO）**：
+  - `GroupMemberResponse`：成员信息。
+  - `MySentInvitationResponse`：我发出的邀请记录。
+  - `MyJoinRequestResponse`：我的加入申请记录。
+  - `OwnerJoinRequestResponse`：群主视角的加入申请记录。
 
-## 7. 当前最重要的认证链路
+### 3. 数据访问层（Mapper & XML）
+- **`GroupMembershipMapper` & `GroupMembershipMapper.xml`**：
+  - 继承 MyBatis-Plus `BaseMapper<Group>`。
+  - 采用 PostgreSQL `INSERT ... RETURNING id` 规约实现高效单往返自增主键返回。
+  - 实现 `selectOwnedGroupsByUserId`（包含待审批子查询统计）、`selectJoinedGroupsByUserId`、`selectPendingInvitationsByInviteeUserId` 等多表联查。
+  - 采用 `updateInvitationStatus` 结合乐观并发控制（CAS，`WHERE id = #{id} AND status = #{fromStatus}`）。
+- **`GroupJoinRequestMapper` & `GroupJoinRequestMapper.xml`**：
+  - 继承 `BaseMapper<GroupJoinRequest>`。
+  - 支持 `selectActiveGroupByCode`、`countPendingJoinRequest`、`selectMyJoinRequests` 等入群申请相关的全套复杂 SQL。
+
+### 4. 权限守卫与可见性服务（`GroupMembershipService`）
+- **可见性查询**：`listVisibleGroups()` 聚合拥有的群组、加入的群组与待处理邀请。
+- **权限安全守卫（Guard）**：
+  - `requireGroupReadable(groupId)`：检查当前用户是否为该组活跃成员，非成员立即抛出 `BusinessException`。
+  - `requireGroupOwner(groupId)`：检查当前用户是否为群组 `OWNER`，非群主拒绝操作。
+
+## 7. 当前最重要的认证与鉴权链路
 
 ```text
                     HTTP Request
@@ -657,12 +695,12 @@ docker compose up -d
 | `auth.AuthController` | 🟢 **已完成**（5 个核心端点就绪） |
 | `JwtAuthenticationFilter` | 🟢 **已完成**（已手写过滤与白名单） |
 | `auth.model.vo` | 🟢 已完成（AuthTokensResponse、CurrentUserProfileResponse） |
-| `/api/auth/me` | 🟢 代码已完成，待运行联调 |
-| 全链路接口联调验证 | 🟡 **下一步** |
-| group（群组与知识库） | ⏳ 下一阶段 |
-| document（文档管理） | ⏳ 后续 |
+| `/api/auth/me` | 🟢 已完成并通过联调 |
+| 全链路接口联调验证 | 🟢 已通过联调与前端验证 |
+| group（群组与知识库） | 🟡 **进行中**（4张表结构、枚举、Entity/DTO/VO、Mapper+XML、GroupMembershipService 已就绪并通过编译） |
+| document（文档管理与分片上传） | ⏳ 后续 |
 | ingestion（ETL流水线） | ⏳ 后续 |
-| engine（混合检索） | ⏳ 后续 |
+| engine（PGvector向量混合检索） | ⏳ 后续 |
 | qa（知识库问答） | ⏳ 后续 |
 | assistant（AI助手） | ⏳ 后续 |
 | metrics（计量统计） | ⏳ 后续 |
@@ -680,12 +718,10 @@ docker compose up -d
 2. 不继续堆新的业务代码；
 3. 编译通过后再进入下一步。
 
-当前保持节奏，先跑通联调测试，再平稳推进 `group` 模块。
-
 ---
 
 ## 当前进度节点
 
-**已完成：`UserQueryService` → `AuthenticatedUser` / `UserContext` → `CurrentUserService` → `AuthService` → `AuthController` + `JwtAuthenticationFilter`（auth 模块代码全量实现并通过编译）**
+**已完成：`group` 模块基础设施全量就绪：4 张表初始化 → 4 个枚举 → 4 个 Entity + 2 个 DTO + 4 个 VO → 2 个 Mapper 接口与 XML (`GroupMembershipMapper`, `GroupJoinRequestMapper`) → `GroupMembershipService`（权限守卫与可见性聚合），全量编译通过。**
 
-**下一步：启动本地环境，使用 Postman / HTTP 客户端进行 `/api/auth/*` 全链路端到端联调测试；随后开启 `group` 知识库模块。**
+**下一步：编写 `GroupManagementService`（群组创建、邀请、成员移除）与 `GroupJoinRequestService`（申请审批流程），随后推进 Controller 层端点暴露与接口测试。**

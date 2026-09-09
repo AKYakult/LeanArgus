@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MyArgus 认证鉴权测试平台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-main: #0d1117;
+      --bg-card: #161b22;
+      --bg-subtle: #21262d;
+      --border: #30363d;
+      --text-main: #f0f6fc;
+      --text-muted: #8b949e;
+      --accent: #2ea043;
+      --accent-hover: #3fb950;
+      --primary: #388bfd;
+      --primary-hover: #58a6ff;
+      --danger: #f85149;
+      --warning: #d29922;
+      --badge-bg: #238636;
+      --font-code: 'JetBrains Mono', monospace;
+      --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      padding: 24px;
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 20px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-badge {
+      background: linear-gradient(135deg, #2ea043, #388bfd);
+      color: white;
+      font-weight: 700;
+      font-size: 16px;
+      padding: 6px 12px;
+      border-radius: 8px;
+    }
+
+    .title h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .title p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #8b949e;
+    }
+
+    .status-dot.online {
+      background: #2ea043;
+      box-shadow: 0 0 8px #2ea043;
+    }
+
+    .status-dot.offline {
+      background: #f85149;
+    }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 1024px) {
+      .layout-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-header h2 {
+      font-size: 15px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    input {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-main);
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      border-color: var(--primary);
+    }
+
+    .button-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+
+    button.btn-primary {
+      background: #238636;
+      color: #fff;
+    }
+    button.btn-primary:hover {
+      background: #2ea043;
+    }
+
+    button.btn-info {
+      background: #1f6feb;
+      color: #fff;
+    }
+    button.btn-info:hover {
+      background: #388bfd;
+    }
+
+    button.btn-danger {
+      background: #b62324;
+      color: #fff;
+    }
+    button.btn-danger:hover {
+      background: #da3633;
+    }
+
+    button.btn-subtle {
+      background: var(--bg-subtle);
+      border-color: var(--border);
+      color: var(--text-main);
+    }
+    button.btn-subtle:hover {
+      background: #30363d;
+    }
+
+    /* User Profile Display */
+    .profile-box {
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #1f6feb, #8957e5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .profile-info {
+      flex: 1;
+    }
+
+    .profile-info .name {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .profile-info .meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Token Details */
+    .token-box {
+      background: var(--bg-main);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-family: var(--font-code);
+      font-size: 11px;
+      color: #a5d6ff;
+      word-break: break-all;
+      max-height: 80px;
+      overflow-y: auto;
+      margin-bottom: 12px;
+    }
+
+    /* Response Console */
+    .console-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .response-pre {
+      background: #090d13;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      color: #7ee787;
+      font-family: var(--font-code);
+      font-size: 12px;
+      line-height: 1.6;
+      max-height: 480px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+
+    .http-badge {
+      font-family: var(--font-code);
+      font-weight: 700;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .http-200 { background: #238636; color: white; }
+    .http-400 { background: #d29922; color: white; }
+    .http-401 { background: #da3633; color: white; }
+    .http-500 { background: #82071e; color: white; }
+
+    .help-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 头部导航 -->
+  <header>
+    <div class="brand">
+      <div class="logo-badge">Argus</div>
+      <div class="title">
+        <h1>MyArgus 认证鉴权测试台</h1>
+        <p>Spring Boot 4 · Java 21 · PostgreSQL · 无状态手写 JWT 鉴权验证</p>
+      </div>
+    </div>
+    <div class="status-bar">
+      <span class="badge" id="server-status-badge">
+        <span class="status-dot" id="server-status-dot"></span>
+        <span id="server-status-text">检测后端...</span>
+      </span>
+      <button class="btn-subtle" onclick="checkHealth()">刷新状态</button>
+    </div>
+  </header>
+
+  <!-- 主体栅格 -->
+  <div class="layout-grid">
+
+    <!-- 左侧：功能操作区 -->
+    <div class="left-col">
+
+      <!-- 模块 1：用户注册 -->
+      <div class="card">
+        <div class="card-header">
+          <h2><span>📝</span> 1. 用户注册 (POST /api/auth/register)</h2>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>用户名 (3-32位, 仅字母/数字/_/-)</label>
+            <input type="text" id="reg-username" value="testuser" placeholder="例如: testuser">
+          </div>
+          <div class="form-group">
+            <label>显示昵称</label>
+            <input type="text" id="reg-displayname" value="学习者小杨" placeholder="例如: 张三">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>邮箱地址</label>
+            <input type="email" id="reg-email" value="test@example.com" placeholder="test@example.com">
+          </div>
+          <div class="form-group">
+            <label>密码 (包含大小写、数字或特殊字符)</label>
+            <input type="password" id="reg-password" value="Password123!" placeholder="密码">
+          </div>
+        </div>
+        <div class="button-group">
+          <button class="btn-primary" onclick="handleRegister()">执行注册</button>
+          <button class="btn-subtle" onclick="fillAdminData()">填入管理员预置账号</button>
+        </div>
+        <div class="help-hint">注册成功后，密码将经 BCrypt 哈希并落库 PostgreSQL，账号默认角色为 USER。</div>
+      </div>
+
+      <!-- 模块 2：用户登录 -->
+      <div class="card">
+        <div class="card-header">
+          <h2><span>🔑</span> 2. 用户登录 (POST /api/auth/login)</h2>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>登录标识 (用户名或邮箱)</label>
+            <input type="text" id="login-id" value="testuser" placeholder="用户名或邮箱">
+          </div>
+          <div class="form-group">
+            <label>密码</label>
+            <input type="password" id="login-pwd" value="Password123!" placeholder="密码">
+          </div>
+        </div>
+        <div class="button-group">
+          <button class="btn-info" onclick="handleLogin()">登录并获取双令牌</button>
+          <button class="btn-subtle" onclick="handleQuickAdminLogin()">一键以 admin 登录</button>
+        </div>
+        <div class="help-hint">
+          登录成功后：Access Token 存入内存/LocalStrage 用于 Bearer 认证；Refresh Token 自动由后端写入 <b>httpOnly Cookie</b>。
+        </div>
+      </div>
+
+      <!-- 模块 3：受保护资源访问与双令牌测试 -->
+      <div class="card">
+        <div class="card-header">
+          <h2><span>🛡️</span> 3. 受保护资源与令牌维护</h2>
+        </div>
+        <div class="button-group">
+          <button class="btn-primary" onclick="handleGetMe()">
+            <span>👤</span> 获取当前用户 (GET /api/auth/me)
+          </button>
+          <button class="btn-subtle" onclick="handleGetMeWithoutToken()">
+            <span>🚫</span> 测试无 Token 访问 (预期 401)
+          </button>
+          <button class="btn-info" onclick="handleRefreshToken()">
+            <span>🔄</span> 刷新令牌 (POST /api/auth/refresh)
+          </button>
+          <button class="btn-danger" onclick="handleLogout()">
+            <span>🚪</span> 登出 (POST /api/auth/logout)
+          </button>
+        </div>
+        <div class="button-group" style="margin-top: 10px;">
+          <button class="btn-subtle" onclick="handleListAllUsers()">
+            <span>📋</span> 查看所有用户列表 (GET /test/users)
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 右侧：状态展示与实时响应控制台 -->
+    <div class="right-col">
+
+      <!-- 当前登录态 -->
+      <div class="card">
+        <div class="card-header">
+          <h2><span>👤</span> 当前登录状态 (Session)</h2>
+          <span id="login-indicator" class="badge">未登录</span>
+        </div>
+
+        <div id="profile-container" style="display: none;">
+          <div class="profile-box">
+            <div class="avatar" id="prof-avatar">U</div>
+            <div class="profile-info">
+              <div class="name" id="prof-name">-</div>
+              <div class="meta" id="prof-meta">-</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="token-display-wrap" style="margin-top: 14px;">
+          <label>当前 Access Token (内存 / LocalStorage):</label>
+          <div class="token-box" id="token-display">无 Access Token</div>
+          <button class="btn-subtle" style="font-size: 11px; padding: 4px 10px;" onclick="copyToken()">复制 Token</button>
+          <button class="btn-subtle" style="font-size: 11px; padding: 4px 10px;" onclick="clearLocalToken()">清除本地 Token</button>
+        </div>
+      </div>
+
+      <!-- 实时 API 交互控制台 -->
+      <div class="card">
+        <div class="card-header console-header">
+          <h2><span>⚡</span> API 实时交互响应</h2>
+          <span id="response-status-badge"></span>
+        </div>
+        <pre class="response-pre" id="response-output">// 准备就绪，点击左侧按钮进行接口测试...</pre>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    const API_BASE = '';
+    let currentAccessToken = localStorage.getItem('myargus_access_token') || '';
+
+    // 初始化运行
+    window.addEventListener('DOMContentLoaded', () => {
+      checkHealth();
+      if (currentAccessToken) {
+        updateTokenDisplay(currentAccessToken);
+        handleGetMe();
+      }
+    });
+
+    // 1. 服务心跳检测
+    async function checkHealth() {
+      const dot = document.getElementById('server-status-dot');
+      const text = document.getElementById('server-status-text');
+      try {
+        const res = await fetch(`${API_BASE}/ping`);
+        const str = await res.text();
+        if (str.includes('pong')) {
+          dot.className = 'status-dot online';
+          text.innerText = '后端服务正常 (Online)';
+        } else {
+          dot.className = 'status-dot offline';
+          text.innerText = '后端返回异常';
+        }
+      } catch (err) {
+        dot.className = 'status-dot offline';
+        text.innerText = '后端连接失败 (请检查 8080 端口)';
+      }
+    }
+
+    // 2. 注册
+    async function handleRegister() {
+      const username = document.getElementById('reg-username').value.trim();
+      const displayName = document.getElementById('reg-displayname').value.trim();
+      const email = document.getElementById('reg-email').value.trim();
+      const password = document.getElementById('reg-password').value;
+
+      const payload = { username, displayName, email, password };
+      logRequest('POST', '/api/auth/register', payload);
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        logResponse(res.status, data);
+
+        if (res.ok && data.success) {
+          document.getElementById('login-id').value = username;
+          document.getElementById('login-pwd').value = password;
+          alert('注册成功！已自动填充到登录表单，请点击登录。');
+        }
+      } catch (err) {
+        logResponse(0, { error: err.message });
+      }
+    }
+
+    // 3. 登录
+    async function handleLogin() {
+      const loginId = document.getElementById('login-id').value.trim();
+      const password = document.getElementById('login-pwd').value;
+
+      const payload = { loginId, password };
+      logRequest('POST', '/api/auth/login', payload);
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include', // 关键：允许携带和接收 httpOnly Cookie
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        logResponse(res.status, data);
+
+        if (res.ok && data.success && data.data) {
+          const token = data.data.accessToken;
+          setAccessToken(token);
+          renderUserProfile(data.data.currentUser);
+        }
+      } catch (err) {
+        logResponse(0, { error: err.message });
+      }
+    }
+
+    // 4. 获取当前用户画像 (/api/auth/me)
+    async function handleGetMe() {
+      if (!currentAccessToken) {
+        alert('本地尚未持有 Access Token，请先登录！');
+        return;
+      }
+      logRequest('GET', '/api/auth/me', null, { 'Authorization': `Bearer ${currentAccessToken.substring(0, 15)}...` });
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/me`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${currentAccessToken}`
+          },
+          credentials: 'include'
+        });
+
+        const data = await res.json();
+        logResponse(res.status, data);
+
+        if (res.ok && data.success && data.data) {
+          renderUserProfile(data.data);
+        } else if (res.status === 401) {
+          renderLoggedOut();
+        }
+      } catch (err) {
+        logResponse(0, { error: err.message });
+      }
+    }
+
+    // 5. 测试无 Token 访问 (预期拦截并返回 401)
+    async function handleGetMeWithoutToken() {
+      logRequest('GET', '/api/auth/me (无 Authorization Header)', null);
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/me`, {
+          method: 'GET'
+        });
+        const data = await res.json();
+        logResponse(res.status, data);
+      } catch (err) {
+        logResponse(0, { error: err.message });
+      }
+    }
+
+    // 6. 刷新令牌
+    async function handleRefreshToken() {
+      logRequest('POST', '/api/auth/refresh (依赖 httpOnly Cookie)', null);
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include' // 自动将浏览器的 MYARGUS_REFRESH_TOKEN cookie 传给后端
+        });
+
+        const data = await res.json();
+        logResponse(res.status, data);
+
+        if (res.ok && data.success && data.data) {
+          setAccessToken(data.data.accessToken);
+          renderUserProfile(data.data.currentUser);
+        }
+      } catch (err) {
+        logResponse(0, { error: err.message });
+      }
+    }
+
+    // 7. 登出
+    async function handleLogout() {
+      logRequest('POST', '/api/auth/logout', null);
+
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/logout`, {
+          method: 'POST',
+          credentials: 'include'
+        });
+
+        const data = await res.json();
+        logResponse(res.status, data);
+
+        clearLocalToken();
+        renderLoggedOut();
+      } catch (err) {
+        logResponse(0, { error: err.message });
+      }
+    }
+
+    // 8. 调试：列出数据库内所有用户
+    async function handleListAllUsers() {
+      logRequest('GET', '/test/users', null);
+      try {
+        const res = await fetch(`${API_BASE}/test/users`);
+        const data = await res.json();
+        logResponse(res.status, data);
+      } catch (err) {
+        logResponse(0, { error: err.message });
+      }
+    }
+    // 辅助工具方法
+    function setAccessToken(token) {
+      currentAccessToken = token;
+      localStorage.setItem('myargus_access_token', token);
+      updateTokenDisplay(token);
+    }
+
+    function clearLocalToken() {
+      currentAccessToken = '';
+      localStorage.removeItem('myargus_access_token');
+      updateTokenDisplay('');
+    }
+
+    function updateTokenDisplay(token) {
+      const box = document.getElementById('token-display');
+      box.innerText = token || '无 Access Token (已清除或未登录)';
+    }
+
+    function copyToken() {
+      if (!currentAccessToken) return;
+      navigator.clipboard.writeText(currentAccessToken);
+      alert('Access Token 已复制到剪贴板！');
+    }
+
+    function renderUserProfile(profile) {
+      document.getElementById('login-indicator').innerText = '已登录: ' + profile.displayName;
+      document.getElementById('login-indicator').style.background = '#238636';
+
+      const container = document.getElementById('profile-container');
+      container.style.display = 'block';
+
+      document.getElementById('prof-avatar').innerText = (profile.displayName || 'U')[0].toUpperCase();
+      document.getElementById('prof-name').innerText = `${profile.displayName} (@${profile.userCode || profile.userId})`;
+      document.getElementById('prof-meta').innerText = `角色: ${profile.systemRole} | 用户ID: ${profile.userId} | 强改密码: ${profile.mustChangePassword ? '是' : '否'}`;
+    }
+
+    function renderLoggedOut() {
+      document.getElementById('login-indicator').innerText = '未登录';
+      document.getElementById('login-indicator').style.background = 'var(--bg-subtle)';
+      document.getElementById('profile-container').style.display = 'none';
+    }
+
+    function fillAdminData() {
+      document.getElementById('reg-username').value = 'dev_tester';
+      document.getElementById('reg-displayname').value = '测试开发者';
+      document.getElementById('reg-email').value = 'dev@test.org';
+      document.getElementById('reg-password').value = 'DevArgus2026!';
+    }
+
+    function handleQuickAdminLogin() {
+      document.getElementById('login-id').value = 'admin';
+      document.getElementById('login-pwd').value = '021799';
+      handleLogin();
+    }
+
+    function logRequest(method, url, payload, headers = {}) {
+      const output = document.getElementById('response-output');
+      const badge = document.getElementById('response-status-badge');
+      badge.innerHTML = `<span class="http-badge http-200">发送中...</span>`;
+      output.innerText = `>>> 发送请求: [${method}] ${url}\n` +
+        (Object.keys(headers).length ? `>>> 请求头: ${JSON.stringify(headers, null, 2)}\n` : '') +
+        (payload ? `>>> 请求载荷:\n${JSON.stringify(payload, null, 2)}\n\n` : '\n') +
+        `等待服务器响应...`;
+    }
+
+    function logResponse(statusCode, data) {
+      const output = document.getElementById('response-output');
+      const badge = document.getElementById('response-status-badge');
+
+      let badgeClass = 'http-200';
+      if (statusCode === 400) badgeClass = 'http-400';
+      if (statusCode === 401 || statusCode === 403) badgeClass = 'http-401';
+      if (statusCode >= 500) badgeClass = 'http-500';
+
+      badge.innerHTML = `<span class="http-badge ${badgeClass}">HTTP ${statusCode || 'ERR'}</span>`;
+      output.innerText = output.innerText.replace('等待服务器响应...', '') +
+        `<<< 响应状态码: HTTP ${statusCode}\n` +
+        `<<< 响应内容:\n${JSON.stringify(data, null, 2)}`;
+    }
+  </script>
+</body>
+</html>

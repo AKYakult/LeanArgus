@@ -1,0 +1,42 @@
+### 1. 心跳检测
+GET http://localhost:8080/ping
+
+### 2. 数据库全部用户列表（开发阶段调试）
+GET http://localhost:8080/test/users
+
+### 3. 用户注册
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "coder_jack",
+  "displayName": "杰克",
+  "email": "jack@example.com",
+  "password": "Password123!"
+}
+
+### 4. 用户登录（获取 AccessToken，响应头下发 httpOnly Cookie）
+# @name login
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "loginId": "coder_jack",
+  "password": "Password123!"
+}
+
+### 提取并暂存登录得到的 accessToken
+@accessToken = {{login.response.body.data.accessToken}}
+
+### 5. 受保护端点：获取当前用户个人信息（必须带 Bearer Token）
+GET http://localhost:8080/api/auth/me
+Authorization: Bearer {{accessToken}}
+
+### 6. 受保护端点：无 Token 访问（测试鉴权拦截，预期 401 Unauthorized）
+GET http://localhost:8080/api/auth/me
+
+### 7. 刷新 Token（依赖 Cookie 中的 Refresh Token）
+POST http://localhost:8080/api/auth/refresh
+
+### 8. 退出登录（吊销 Refresh Token 并清空 Cookie）
+POST http://localhost:8080/api/auth/logout

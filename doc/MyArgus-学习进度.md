@@ -48,8 +48,16 @@
 8. ✅ 安全 Cookie 管理与登出（`POST /api/auth/refresh` & `POST /api/auth/logout`）
    - ✅ `AuthCookieSupport`：将 Refresh Token 封装为 `httpOnly` + `SameSite=Lax` Cookie
    - ✅ 登出原子吊销 Refresh Token 并清除客户端 Cookie
-9. 🟡 **当前阶段**：端到端全链路接口联调与 Postman 验证
-10. ⬜ **下一阶段**：知识库群组与成员权限管理（`group` 模块）
+9. ✅ 端到端全链路接口联调与验证（支持 requests.http 与静态页面联调）
+10. 🟡 **当前阶段**：知识库群组与成员权限管理（`group` 模块）
+    - ✅ 4 张核心表结构创建（`groups`, `group_memberships`, `group_invitations`, `group_join_requests`）
+    - ✅ 4 个状态与角色枚举 (`GroupRole`, `GroupStatus`, `GroupInvitationStatus`, `GroupJoinRequestStatus`)
+    - ✅ 4 个 Entity、2 个 DTO、4 个 VO 全量建立
+    - ✅ 2 个 MyBatis-Plus Mapper 接口及 XML 文件（`GroupMembershipMapper`, `GroupJoinRequestMapper`）
+    - ✅ `GroupMembershipService`：群组可见性查询与权限守卫
+    - ⬜ `GroupManagementService`：群组创建、邀请流转与成员管理
+    - ⬜ `GroupJoinRequestService`：申请加入与审批流转
+    - ⬜ 控制层（Controller）端点暴露与接口测试
 
 ---
 
@@ -90,32 +98,25 @@
 - **`AuthCookieSupport`**：将 Refresh Token 写入 `httpOnly` + `SameSite=Lax` Cookie，杜绝 XSS 窃取风险。
 - **登出流程**：`POST /api/auth/logout` 清理数据库持久化 Token 并通过响应头 `Max-Age=0` 清空浏览器 Cookie。
 
+### Step 9：group 模块基础设施与数据访问层
+- **数据库表**：在 PostgreSQL 中建立 `groups`、`group_memberships`、`group_invitations`、`group_join_requests` 4 张核心表及相应索引。
+- **模型与枚举**：严格对照 reference，建立 `GroupRole`、`GroupStatus`、`GroupInvitationStatus`、`GroupJoinRequestStatus` 4 个枚举；4 个数据库实体及前后端通信 DTO/VO。
+- **Mapper 与 XML**：
+  - `GroupMembershipMapper`：管理群组归属、成员角色与邀请流转，利用 PostgreSQL `INSERT ... RETURNING id` 与 CAS 乐观并发控制。
+  - `GroupJoinRequestMapper`：管理申请加入与审批流转。
+- **权限与可见性服务 (`GroupMembershipService`)**：
+  - `listVisibleGroups()` 聚合当前登录用户拥有的、加入的群组以及待处理邀请。
+  - `requireGroupReadable` 与 `requireGroupOwner` 提供业务权限守卫。
+
 ---
 
 ## 下一步核心待办清单
 
-认证鉴权核心模块已全部完成编码并编译通过，接下来聚焦于联调与下一模块拓展：
-
-### 阶段一：端到端接口联调验证（进行中）
-1. **启动容器与服务**：
-   - 运行 `docker compose up -d` 确保 PostgreSQL 启动。
-   - 运行 `./gradlew bootRun` 启动应用。
-2. **Postman / Curl 顺序测试流**：
-   - `POST /api/auth/register`：测试合法注册、重名检测、密码强度校验。
-   - `POST /api/auth/login`：验证登录成功返回 Access Token，并检查响应头是否正确下发 `Set-Cookie: MYARGUS_REFRESH_TOKEN=...`。
-   - `GET /api/auth/me`：
-     - 不带 Authorization 头，验证是否返回 401。
-     - 携带 Bearer Token，验证是否正确返回当前用户画像。
-   - `POST /api/auth/refresh`：带 Cookie 刷新，验证新 Access Token 生成及旧 Refresh Token 吊销。
-   - `POST /api/auth/logout`：验证退出后 Cookie 清除且 Refresh Token 状态变为 revoked。
-
-### 阶段二：开启知识库群组模块（`group` 模块研发）
-参考 `Argus` 系统架构，推进下一核心领域模型：
-1. **数据实体与 Mapper**：
-   - `Group`（对应 `groups` 表，知识库空间）。
-   - `GroupMembership`（对应 `group_memberships` 表，成员与 `OWNER` / `MEMBER` 权限）。
-   - `GroupInvitation`（对应 `group_invitations` 表，邀请流程）。
-   - `GroupJoinRequest`（对应 `group_join_requests` 表，申请加入审批流程）。
-2. **群组业务与权限服务**：
-   - 创建群组、转让群主、成员权限校验（基于 `UserContext` 获取当前用户）。
-   - 邀请/申请流转状态机（`PENDING` -> `ACCEPTED` / `REFUSED` / `CANCELLED`）。
+1. **编写 `GroupManagementService`**：实现创建群组、发起邀请、接受/拒绝邀请、退出/解散群组业务逻辑。
+2. **编写 `GroupJoinRequestService`**：实现申请加入知识库、群主审批/拒绝申请逻辑。
+3. **编写 Controller 控制层**：
+   - `GroupManagementController` (`POST /api/groups`, `POST /api/groups/{id}/invitations` 等)
+   - `GroupQueryController` (`GET /api/groups/my`, `GET /api/groups/{id}/members`)
+   - `GroupJoinRequestController` (`POST /api/groups/{id}/join-requests` 等)
+   - `InvitationDecisionController` (`POST /api/invitations/{id}/accept` 等)
+4. **全链路接口测试与联调**。
