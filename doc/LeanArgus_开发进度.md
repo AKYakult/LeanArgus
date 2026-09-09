@@ -31,7 +31,7 @@ com.example.myargus
 │   │   ├── AuthConfiguration
 │   │   └── AuthProperties
 │   ├── controller
-│   │   └── AuthController           ← 新增（已完成，暴露 /api/auth/*）
+│   │   └── AuthController           ← （已完成，暴露 /api/auth/*）
 │   ├── mapper
 │   │   └── UserRefreshTokenMapper
 │   ├── model
@@ -41,13 +41,13 @@ com.example.myargus
 │   │   ├── entity
 │   │   │   └── UserRefreshToken
 │   │   └── vo
-│   │       ├── AuthTokensResponse       ← 新增（已完成）
-│   │       └── CurrentUserProfileResponse ← 新增（已完成）
+│   │       ├── AuthTokensResponse
+│   │       └── CurrentUserProfileResponse
 │   ├── security
 │   │   ├── JwtAccessTokenService
 │   │   ├── RefreshTokenService
 │   │   ├── AuthCookieSupport
-│   │   └── JwtAuthenticationFilter  ← 新增（已完成，手写请求拦截与上下文绑定）
+│   │   └── JwtAuthenticationFilter  ← （已完成，手写请求拦截与上下文绑定）
 │   └── service
 │       ├── PasswordHasher
 │       ├── PasswordPolicyValidator
@@ -56,11 +56,51 @@ com.example.myargus
 │
 ├── common
 │   ├── api
+│   │   └── ApiResponse
 │   ├── enums
+│   │   ├── GroupInvitationStatus   ← 新增（已完成，邀请状态）
+│   │   ├── GroupJoinRequestStatus  ← 新增（已完成，申请状态）
+│   │   ├── GroupRole               ← 新增（已完成，群组角色 OWNER/MEMBER）
+│   │   ├── GroupStatus             ← 新增（已完成，群组状态 ACTIVE/ARCHIVED）
+│   │   ├── SystemRole
+│   │   └── UserStatus
 │   ├── exception
+│   │   ├── BusinessException
+│   │   ├── ForbiddenException
+│   │   ├── GlobalExceptionHandler
+│   │   └── UnauthorizedException
 │   └── security
 │       ├── AuthenticatedUser
 │       └── UserContext
+│
+├── group                             ← （已全量完成并通过编译）
+│   ├── controller
+│   │   ├── GroupJoinRequestController   ← 新增（已完成，申请审批接口）
+│   │   ├── GroupManagementController    ← 新增（已完成，创建/邀请/踢人/退群）
+│   │   ├── GroupQueryController         ← 新增（已完成，/api/groups/my 查询）
+│   │   └── InvitationDecisionController ← 新增（已完成，接受/拒绝/取消邀请）
+│   ├── mapper
+│   │   ├── GroupJoinRequestMapper       ← 新增（已完成，申请审批 Mapper）
+│   │   └── GroupMembershipMapper        ← 新增（已完成，成员与邀请 Mapper）
+│   ├── model
+│   │   ├── dto
+│   │   │   ├── CreateGroupRequest         ← 新增（已完成）
+│   │   │   ├── CreateInvitationRequest    ← 新增（已完成）
+│   │   │   └── CreateJoinRequestRequest   ← 新增（已完成）
+│   │   ├── entity
+│   │   │   ├── Group                      ← 新增（已完成，映射 groups）
+│   │   │   ├── GroupInvitation            ← 新增（已完成，映射 group_invitations）
+│   │   │   ├── GroupJoinRequest           ← 新增（已完成，映射 group_join_requests）
+│   │   │   └── GroupMembership            ← 新增（已完成，映射 group_memberships）
+│   │   └── vo
+│   │       ├── GroupMemberResponse          ← 新增（已完成）
+│   │       ├── MyJoinRequestResponse        ← 新增（已完成）
+│   │       ├── MySentInvitationResponse     ← 新增（已完成）
+│   │       └── OwnerJoinRequestResponse     ← 新增（已完成）
+│   └── service
+│       ├── GroupJoinRequestService      ← 新增（已完成，入群申请审批服务）
+│       ├── GroupManagementService       ← 新增（已完成，群组生命周期管理）
+│       └── GroupMembershipService       ← 新增（已完成，权限守卫与可见性聚合）
 │
 └── user
     ├── controller
@@ -76,7 +116,7 @@ com.example.myargus
         └── UserQueryService
 ```
 
-> 以上表示目前已经建立/实现的完整结构。认证链路（Service + Controller + Filter + Cookie 支持）已全量完成并通过编译，待本地运行全链路联调验证。
+> 资源文件对应增加：`resources/mappers/GroupMembershipMapper.xml` 与 `resources/mappers/GroupJoinRequestMapper.xml`。包含测试用例：`requests.http`（1 ~ 22 项全链路接口测试）。
 
 ## 3. 已完成：common
 
@@ -502,6 +542,7 @@ refreshToken
 - **请求（DTO）**：
   - `CreateGroupRequest`：创建群组（带 Bean Validation `@NotBlank` / `@Size` 约束）。
   - `CreateInvitationRequest`：创建群组邀请。
+  - `CreateJoinRequestRequest`：提交加入群组申请（凭 `groupCode`）。
 - **响应（VO）**：
   - `GroupMemberResponse`：成员信息。
   - `MySentInvitationResponse`：我发出的邀请记录。
@@ -518,11 +559,29 @@ refreshToken
   - 继承 `BaseMapper<GroupJoinRequest>`。
   - 支持 `selectActiveGroupByCode`、`countPendingJoinRequest`、`selectMyJoinRequests` 等入群申请相关的全套复杂 SQL。
 
-### 4. 权限守卫与可见性服务（`GroupMembershipService`）
-- **可见性查询**：`listVisibleGroups()` 聚合拥有的群组、加入的群组与待处理邀请。
-- **权限安全守卫（Guard）**：
+### 4. 业务服务层（Service）
+- **`GroupMembershipService`（权限守卫与可见性）**：
+  - `listVisibleGroups()` 聚合拥有的群组、加入的群组与待处理邀请。
   - `requireGroupReadable(groupId)`：检查当前用户是否为该组活跃成员，非成员立即抛出 `BusinessException`。
   - `requireGroupOwner(groupId)`：检查当前用户是否为群组 `OWNER`，非群主拒绝操作。
+- **`GroupManagementService`（群组核心管理与邀请生命周期）**：
+  - `createGroup`：生成 UUID 去横线的软编码 `groupCode`，写入群组表并自动将创建人作为 `OWNER` 加入成员表，`@Transactional` 确保原子一致。
+  - `createInvitation`：群主发起邀请，前置校验用户存在性、成员去重、邀请去重与已有申请排重。
+  - `acceptInvitation` / `rejectInvitation` / `cancelInvitation`：接受/拒绝/撤回邀请状态流转，接受时自动加群并 CAS 变更状态。
+  - `removeMember` / `leaveGroup`：踢人与退群，限制不能移除群主且群主不能退群。
+- **`GroupJoinRequestService`（申请加入与审批流转）**：
+  - `submitJoinRequest`：用户凭 `groupCode` 发起申请，防重校验后落库。
+  - `approveJoinRequest` / `rejectJoinRequest`：群主审批，通过时自动入库成员表并原子更新状态为 `APPROVED`。
+
+### 5. 控制层（Controller）
+- **`GroupQueryController`**：暴露 `GET /api/groups/my`。
+- **`GroupManagementController`**：暴露 `/api/groups` 下的创建、邀请、成员查询、踢人、退群接口。
+- **`InvitationDecisionController`**：暴露 `/api/invitations/{id}/*` 下的接受、拒绝、撤回邀请接口。
+- **`GroupJoinRequestController`**：暴露 `/api/groups/join-requests` 下的申请提交、申请查询与群主审批/拒绝接口。
+
+### 6. 测试与验证支持
+- `requests.http` 文件已完整追加 **9 ~ 22 项**测试用例，覆盖群组创建、邀请流转、申请审批全流程。
+- 全量通过 `./gradlew compileJava` 编译测试（0 Errors）。
 
 ## 7. 当前最重要的认证与鉴权链路
 
@@ -697,8 +756,8 @@ docker compose up -d
 | `auth.model.vo` | 🟢 已完成（AuthTokensResponse、CurrentUserProfileResponse） |
 | `/api/auth/me` | 🟢 已完成并通过联调 |
 | 全链路接口联调验证 | 🟢 已通过联调与前端验证 |
-| group（群组与知识库） | 🟡 **进行中**（4张表结构、枚举、Entity/DTO/VO、Mapper+XML、GroupMembershipService 已就绪并通过编译） |
-| document（文档管理与分片上传） | ⏳ 后续 |
+| group（群组与知识库） | 🟢 **已完成**（4表结构 + 实体/DTO/VO + 2 Mapper/XML + 3 Service + 4 Controller 全量就绪并通过编译，已配置 requests.http 测试用例） |
+| document（文档管理与分片上传） | ⏳ 下一步核心业务模块 |
 | ingestion（ETL流水线） | ⏳ 后续 |
 | engine（PGvector向量混合检索） | ⏳ 后续 |
 | qa（知识库问答） | ⏳ 后续 |
@@ -722,6 +781,6 @@ docker compose up -d
 
 ## 当前进度节点
 
-**已完成：`group` 模块基础设施全量就绪：4 张表初始化 → 4 个枚举 → 4 个 Entity + 2 个 DTO + 4 个 VO → 2 个 Mapper 接口与 XML (`GroupMembershipMapper`, `GroupJoinRequestMapper`) → `GroupMembershipService`（权限守卫与可见性聚合），全量编译通过。**
+**已完成：`group` 模块全链路闭环：4 张表初始化 → 4 个枚举 → 4 个 Entity + 3 个 DTO + 4 个 VO → 2 个 Mapper 接口与 XML → 3 个 Service（`GroupMembershipService`、`GroupManagementService`、`GroupJoinRequestService`）→ 4 个 Controller（`GroupQueryController`、`GroupManagementController`、`InvitationDecisionController`、`GroupJoinRequestController`），全量编译通过并通过测试配置。**
 
-**下一步：编写 `GroupManagementService`（群组创建、邀请、成员移除）与 `GroupJoinRequestService`（申请审批流程），随后推进 Controller 层端点暴露与接口测试。**
+**下一步：启动本地环境运行 `./gradlew bootRun`，通过 `requests.http` 执行群组创建、邀请、申请全链路验证；随后开启下一个核心模块：`document`（文档元数据管理、分片上传与 MinIO/本地存储）。**

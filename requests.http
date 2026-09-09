@@ -40,3 +40,95 @@ POST http://localhost:8080/api/auth/refresh
 
 ### 8. 退出登录（吊销 Refresh Token 并清空 Cookie）
 POST http://localhost:8080/api/auth/logout
+
+### ===================================================
+### 群组与知识库管理（Group 模块测试流）
+### ===================================================
+
+### 9. 创建群组 / 知识库（自动将当前用户设为 OWNER）
+# @name createGroup
+POST http://localhost:8080/api/groups
+Content-Type: application/json
+Authorization: Bearer {{accessToken}}
+
+{
+  "name": "技术架构知识库",
+  "description": "存放微服务、RAG 与系统设计文档"
+}
+
+### 提取刚才创建的群组 ID（供后续接口直接引用）
+@groupId = {{createGroup.response.body.data}}
+
+### 10. 查询当前用户可见的所有群组（包含我拥有的、加入的、待处理邀请）
+# @name listMyGroups
+GET http://localhost:8080/api/groups/my
+Authorization: Bearer {{accessToken}}
+
+### 提取返回列表中的群编码 groupCode
+@groupCode = {{listMyGroups.response.body.data.ownedGroups[0].groupCode}}
+
+### 11. 查询指定群组的成员列表（仅 OWNER 或成员可查）
+GET http://localhost:8080/api/groups/{{groupId}}/members
+Authorization: Bearer {{accessToken}}
+
+### 12. 创建群组邀请（仅群主 OWNER 可发起）
+# @name createInvitation
+POST http://localhost:8080/api/groups/{{groupId}}/invitations
+Content-Type: application/json
+Authorization: Bearer {{accessToken}}
+
+{
+  "inviteeUserId": 1
+}
+
+### 提取邀请 ID
+@invitationId = {{createInvitation.response.body.data}}
+
+### 13. 查询当前用户发出的所有群组邀请
+GET http://localhost:8080/api/groups/invitations/my-sent
+Authorization: Bearer {{accessToken}}
+
+### 14. 接受群组邀请（需使用被邀请人的 Token）
+POST http://localhost:8080/api/invitations/{{invitationId}}/accept
+Authorization: Bearer {{accessToken}}
+
+### 15. 拒绝群组邀请（需使用被邀请人的 Token）
+POST http://localhost:8080/api/invitations/{{invitationId}}/reject
+Authorization: Bearer {{accessToken}}
+
+### 16. 取消群组邀请（仅群主 OWNER 可操作）
+POST http://localhost:8080/api/invitations/{{invitationId}}/cancel
+Authorization: Bearer {{accessToken}}
+
+### 17. 提交加入群组申请（用户凭群编码 groupCode 申请加入）
+# @name joinRequest
+POST http://localhost:8080/api/groups/join-requests
+Content-Type: application/json
+Authorization: Bearer {{accessToken}}
+
+{
+  "groupCode": "{{groupCode}}"
+}
+
+### 提取申请 ID
+@requestId = {{joinRequest.response.body.data}}
+
+### 18. 查询当前用户提交的所有加入申请
+GET http://localhost:8080/api/groups/join-requests/my
+Authorization: Bearer {{accessToken}}
+
+### 19. 群主查询指定群组待审批的加入申请列表
+GET http://localhost:8080/api/groups/{{groupId}}/join-requests
+Authorization: Bearer {{accessToken}}
+
+### 20. 群主审批通过加入申请
+POST http://localhost:8080/api/groups/{{groupId}}/join-requests/{{requestId}}/approve
+Authorization: Bearer {{accessToken}}
+
+### 21. 群主拒绝加入申请
+POST http://localhost:8080/api/groups/{{groupId}}/join-requests/{{requestId}}/reject
+Authorization: Bearer {{accessToken}}
+
+### 22. 退出群组（普通成员退群，OWNER 不能退）
+POST http://localhost:8080/api/groups/{{groupId}}/leave
+Authorization: Bearer {{accessToken}}

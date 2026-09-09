@@ -49,15 +49,15 @@
    - ✅ `AuthCookieSupport`：将 Refresh Token 封装为 `httpOnly` + `SameSite=Lax` Cookie
    - ✅ 登出原子吊销 Refresh Token 并清除客户端 Cookie
 9. ✅ 端到端全链路接口联调与验证（支持 requests.http 与静态页面联调）
-10. 🟡 **当前阶段**：知识库群组与成员权限管理（`group` 模块）
+10. ✅ **知识库群组与成员权限管理（`group` 模块，全链路完成）**
     - ✅ 4 张核心表结构创建（`groups`, `group_memberships`, `group_invitations`, `group_join_requests`）
     - ✅ 4 个状态与角色枚举 (`GroupRole`, `GroupStatus`, `GroupInvitationStatus`, `GroupJoinRequestStatus`)
-    - ✅ 4 个 Entity、2 个 DTO、4 个 VO 全量建立
+    - ✅ 4 个 Entity、3 个 DTO、4 个 VO 全量建立
     - ✅ 2 个 MyBatis-Plus Mapper 接口及 XML 文件（`GroupMembershipMapper`, `GroupJoinRequestMapper`）
-    - ✅ `GroupMembershipService`：群组可见性查询与权限守卫
-    - ⬜ `GroupManagementService`：群组创建、邀请流转与成员管理
-    - ⬜ `GroupJoinRequestService`：申请加入与审批流转
-    - ⬜ 控制层（Controller）端点暴露与接口测试
+    - ✅ 3 个业务服务（`GroupMembershipService`, `GroupManagementService`, `GroupJoinRequestService`）
+    - ✅ 4 个控制器（`GroupQueryController`, `GroupManagementController`, `InvitationDecisionController`, `GroupJoinRequestController`）
+    - ✅ `requests.http` 补充 9 ~ 22 项全场景测试用例
+11. ⏳ **下一阶段**：文档管理与分片上传模块（`document` 模块）
 
 ---
 
@@ -98,25 +98,27 @@
 - **`AuthCookieSupport`**：将 Refresh Token 写入 `httpOnly` + `SameSite=Lax` Cookie，杜绝 XSS 窃取风险。
 - **登出流程**：`POST /api/auth/logout` 清理数据库持久化 Token 并通过响应头 `Max-Age=0` 清空浏览器 Cookie。
 
-### Step 9：group 模块基础设施与数据访问层
+### Step 9 & 10：group 模块全链路闭环
 - **数据库表**：在 PostgreSQL 中建立 `groups`、`group_memberships`、`group_invitations`、`group_join_requests` 4 张核心表及相应索引。
 - **模型与枚举**：严格对照 reference，建立 `GroupRole`、`GroupStatus`、`GroupInvitationStatus`、`GroupJoinRequestStatus` 4 个枚举；4 个数据库实体及前后端通信 DTO/VO。
 - **Mapper 与 XML**：
   - `GroupMembershipMapper`：管理群组归属、成员角色与邀请流转，利用 PostgreSQL `INSERT ... RETURNING id` 与 CAS 乐观并发控制。
   - `GroupJoinRequestMapper`：管理申请加入与审批流转。
-- **权限与可见性服务 (`GroupMembershipService`)**：
-  - `listVisibleGroups()` 聚合当前登录用户拥有的、加入的群组以及待处理邀请。
-  - `requireGroupReadable` 与 `requireGroupOwner` 提供业务权限守卫。
+- **业务服务层（Service）**：
+  - `GroupMembershipService`：群组可见性聚合与权限守卫（`requireGroupReadable`, `requireGroupOwner`）。
+  - `GroupManagementService`：群组创建（自动绑定 OWNER）、发起邀请、邀请状态机流转、踢人与退群安全限制。
+  - `GroupJoinRequestService`：凭 `groupCode` 申请入群、防重排查、群主审批/拒绝流转。
+- **控制层（Controller）**：
+  - 暴露 `GroupQueryController` (`/api/groups/my`)、`GroupManagementController` (`/api/groups`)、`InvitationDecisionController` (`/api/invitations`)、`GroupJoinRequestController` (`/api/groups/join-requests`)。
+  - 纯净集成现有 `ApiResponse.ok(...)`。
+- **接口测试套件**：在 `requests.http` 中提供 9 ~ 22 项全链路可执行 HTTP 测试用例。
 
 ---
 
 ## 下一步核心待办清单
 
-1. **编写 `GroupManagementService`**：实现创建群组、发起邀请、接受/拒绝邀请、退出/解散群组业务逻辑。
-2. **编写 `GroupJoinRequestService`**：实现申请加入知识库、群主审批/拒绝申请逻辑。
-3. **编写 Controller 控制层**：
-   - `GroupManagementController` (`POST /api/groups`, `POST /api/groups/{id}/invitations` 等)
-   - `GroupQueryController` (`GET /api/groups/my`, `GET /api/groups/{id}/members`)
-   - `GroupJoinRequestController` (`POST /api/groups/{id}/join-requests` 等)
-   - `InvitationDecisionController` (`POST /api/invitations/{id}/accept` 等)
-4. **全链路接口测试与联调**。
+1. **全链路接口测试验证**：启动后端服务（`./gradlew bootRun`），通过 IDEA `requests.http` 验证群组创建、成员邀请、申请加入全流程。
+2. **开启 `document` 模块（文档管理与分片上传）**：
+   - 文档实体 `Document`、`DocumentChunk`、分片元数据管理。
+   - 对象存储/本地文件存储抽象接入。
+   - 大文件分片并发上传与断点续传。
