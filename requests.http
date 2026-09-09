@@ -146,3 +146,102 @@ Authorization: Bearer {{accessToken}}
 ### 22. 退出群组（普通成员退群，OWNER 不能退）
 POST http://localhost:8080/api/groups/{{groupId}}/leave
 Authorization: Bearer {{accessToken}}
+
+###############################################################################
+# 四、文档管理模块 (Documents API)
+###############################################################################
+
+### 23. 直接上传文档 (文件 <= 10MB, 支持 txt, md, pdf, docx)
+POST http://localhost:8080/api/documents/upload
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="groupId"
+
+{{groupId}}
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="sample.txt"
+Content-Type: text/plain
+
+Hello LeanArgus! This is a test document for RAG ingestion and object storage.
+--WebAppBoundary--
+
+> {%
+    client.global.set("documentId", response.body.data);
+    client.log(">>> [已自动保存 documentId]: " + response.body.data);
+%}
+
+### 24. 初始化分片上传会话 (支持秒传 / 断点续传 / 新建会话)
+POST http://localhost:8080/api/documents/upload/init
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+{
+  "groupId": {{groupId}},
+  "fileName": "large_report.txt",
+  "fileSize": 1048576,
+  "fileHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "chunkSize": 524288,
+  "chunkCount": 2
+}
+
+> {%
+    if (response.body.data && response.body.data.uploadId) {
+        client.global.set("uploadId", response.body.data.uploadId);
+        client.log(">>> [已自动保存 uploadId]: " + response.body.data.uploadId);
+    }
+%}
+
+### 25. 上传分片 0
+POST http://localhost:8080/api/documents/upload/chunks
+Authorization: Bearer {{accessToken}}
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="uploadId"
+
+{{uploadId}}
+--WebAppBoundary
+Content-Disposition: form-data; name="chunkIndex"
+
+0
+--WebAppBoundary
+Content-Disposition: form-data; name="chunkHash"
+
+1111111111111111111111111111111111111111111111111111111111111111
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="chunk_0.part"
+Content-Type: application/octet-stream
+
+< ./scratch/test_chunk_0.part
+--WebAppBoundary--
+
+### 26. 查询分片上传会话进度
+GET http://localhost:8080/api/documents/upload/{{uploadId}}
+Authorization: Bearer {{accessToken}}
+
+### 27. 完成分片合并 (校验全部分片并在 MinIO 合并生成 Document)
+POST http://localhost:8080/api/documents/upload/{{uploadId}}/complete
+Authorization: Bearer {{accessToken}}
+
+### 28. 查询文档列表 (支持按群组、文件名、状态过滤)
+GET http://localhost:8080/api/documents?groupId={{groupId}}
+Authorization: Bearer {{accessToken}}
+
+### 29. 预览文档文本内容 (仅限 READY 状态文档，从 MinIO 读取并解析返回)
+GET http://localhost:8080/api/documents/{{documentId}}/preview?groupId={{groupId}}
+Authorization: Bearer {{accessToken}}
+
+### 30. 下载文档原始文件 (流式传输，Content-Disposition: attachment)
+GET http://localhost:8080/api/documents/{{documentId}}/download?groupId={{groupId}}
+Authorization: Bearer {{accessToken}}
+
+### 31. 重新处理失败文档 (重试 ETL 处理流程)
+POST http://localhost:8080/api/documents/{{documentId}}/retry-ingestion?groupId={{groupId}}
+Authorization: Bearer {{accessToken}}
+
+### 32. 软删除文档 (级联清理向量存储及全文检索索引)
+DELETE http://localhost:8080/api/documents/{{documentId}}?groupId={{groupId}}
+Authorization: Bearer {{accessToken}}
+

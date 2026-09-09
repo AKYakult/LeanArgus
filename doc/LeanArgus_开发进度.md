@@ -102,6 +102,45 @@ com.example.myargus
 │       ├── GroupManagementService       ← 新增（已完成，群组生命周期管理）
 │       └── GroupMembershipService       ← 新增（已完成，权限守卫与可见性聚合）
 │
+├── document                            ← （已全量完成并通过编译）
+│   ├── controller
+│   │   └── DocumentController          ← 新增（已完成，10 个 REST 端点）
+│   ├── mapper
+│   │   ├── DocumentMapper              ← 新增（已完成，文档元数据映射）
+│   │   ├── DocumentUploadChunkMapper   ← 新增（已完成，分片记录映射）
+│   │   └── DocumentUploadSessionMapper ← 新增（已完成，上传会话映射）
+│   ├── model
+│   │   ├── dto
+│   │   │   ├── DocumentQuery           ← 新增（已完成，文档查询过滤 DTO）
+│   │   │   ├── UploadChunkRequest      ← 新增（已完成，分片上传请求 DTO）
+│   │   │   ├── UploadDocumentRequest   ← 新增（已完成，直接上传请求 DTO）
+│   │   │   └── UploadInitRequest       ← 新增（已完成，分片初始化请求 DTO）
+│   │   ├── entity
+│   │   │   ├── DocumentEntity          ← 新增（已完成，映射 documents）
+│   │   │   ├── DocumentUploadChunkEntity   ← 新增（已完成，映射 document_upload_chunks）
+│   │   │   └── DocumentUploadSessionEntity ← 新增（已完成，映射 document_upload_sessions）
+│   │   └── vo
+│   │       ├── DocumentDownloadVO      ← 新增（已完成，下载流与元数据 VO）
+│   │       ├── DocumentListItemVO      ← 新增（已完成，文档列表项 VO）
+│   │       ├── DocumentPreviewVO       ← 新增（已完成，文档全文预览 VO）
+│   │       ├── UploadInitResponse      ← 新增（已完成，分片初始化响应 VO）
+│   │       └── UploadStatusResponse    ← 新增（已完成，分片上传状态 VO）
+│   └── service
+│       ├── DocumentDeleteService       ← 新增（已完成，软删除与失败重试）
+│       ├── DocumentDownloadService     ← 新增（已完成，对象存储流式下载）
+│       ├── DocumentIngestionAsyncListener ← 新增（已完成，异步 ETL 事件监听）
+│       ├── DocumentIngestionRequestedEvent ← 新增（已完成，ETL 触发事件）
+│       ├── DocumentPreviewService      ← 新增（已完成，MinIO 原始文本提取）
+│       ├── DocumentQueryService        ← 新增（已完成，权限过滤与文档查询）
+│       ├── DocumentUploadService       ← 新增（已完成，直接上传/分片秒传续传合并）
+│       └── StaleProcessingDocumentRecoveryRunner ← 新增（已完成，启动孤儿恢复）
+│
+├── engine
+│   └── storage
+│       ├── ObjectStorageService        ← 新增（已完成，对象存储标准抽象）
+│       ├── MinioStorageService         ← 新增（已完成，MinIO 生产实现）
+│       └── MissingObjectStorageService ← 新增（已完成，优雅降级空实现）
+│
 └── user
     ├── controller
     │   └── UserTestController
@@ -116,7 +155,11 @@ com.example.myargus
         └── UserQueryService
 ```
 
-> 资源文件对应增加：`resources/mappers/GroupMembershipMapper.xml` 与 `resources/mappers/GroupJoinRequestMapper.xml`。包含测试用例：`requests.http`（1 ~ 22 项全链路接口测试）。
+> 资源文件对应增加：
+> - `resources/mappers/document/DocumentMapper.xml`
+> - `resources/mappers/document/DocumentUploadSessionMapper.xml`
+> - `resources/mappers/document/DocumentUploadChunkMapper.xml`
+> - `requests.http`（新增 23 ~ 32 项文档上传/分片/合并/查询/预览/下载/删除/重试接口测试用例）。
 
 ## 3. 已完成：common
 
@@ -759,9 +802,9 @@ docker compose up -d
 | group（群组与知识库） | 🟢 **已完成**（4表结构 + 实体/DTO/VO + 2 Mapper/XML + 3 Service + 4 Controller 全量就绪并通过联调测试） |
 | document - 基础存储与表结构 | 🟢 **已完成**（MinIO 容器 + 3 表结构 + ObjectStorageService / MinioStorageService 抽象） |
 | document - Model & Mapper | 🟢 **已完成**（DocumentStatus 枚举 + 3 Entity + 4 DTO + 5 VO + 3 Mapper 接口与 XML，全量编译通过） |
-| document - Service 业务层 | ⏳ 下一步（DocumentUploadService / Query / Preview / Download / Delete） |
-| document - Controller 与接口联调 | ⏳ 待进行 |
-| ingestion（ETL流水线） | ⏳ 后续 |
+| document - Service 业务层 | 🟢 **已完成**（直接上传/分片秒传续传合并/查询/预览/下载/软删除/失败重试/启动恢复/异步事件） |
+| document - Controller 与接口联调 | 🟢 **已完成**（DocumentController 10 个 REST 端点 + requests.http 23~32 用例） |
+| ingestion（ETL流水线与分块） | ⏳ 下一步（Spring AI Ingestion、DocumentParser、RecursiveCharacterTextSplitter） |
 | engine（PGvector向量混合检索） | ⏳ 后续 |
 | qa（知识库问答） | ⏳ 后续 |
 | assistant（AI助手） | ⏳ 后续 |
@@ -784,8 +827,10 @@ docker compose up -d
 
 ## 当前进度节点
 
-**已完成：`document` 模块前两阶段落地：**
+**已完成：`document` 文档管理全模块落地（四阶段 100% 达成并通过编译）：**
 1. **基础设施与存储层**：拉起 `argus-minio` 容器，初始化 `documents`、`document_upload_sessions`、`document_upload_chunks` 3 张数据表；完成 `ObjectStorageService` 契约及 `MinioStorageService`（双重检查锁自动建桶、服务端 compose 合并）与 `MissingObjectStorageService` 优雅降级；
-2. **数据模型与持久层**：创建 `DocumentStatus` 枚举、3 个 MyBatis-Plus 实体类、4 个请求 DTO、5 个响应 VO、3 个 Mapper 接口以及 3 个 XML 映射文件，通过全量编译。
+2. **数据模型与持久层**：创建 `DocumentStatus` 枚举、3 个 MyBatis-Plus 实体类、4 个请求 DTO、5 个响应 VO、3 个 Mapper 接口以及 3 个 XML 映射文件；
+3. **核心业务服务层**：实现直接上传与分片上传生命周期（秒传/断点续传/并发上传/MinIO服务端合并）、RBAC群组文档查询、文本内容预览、二进制流式下载、软删除与失败重试、`StaleProcessingDocumentRecoveryRunner` 启动恢复以及异步事件解耦机制；
+4. **控制层与接口测试**：实现 `DocumentController` 包含 10 个标准 REST 端点，补充 `requests.http` 23~32 项接口测试用例。全量编译通过。
 
-**下一步：编写 `document` 模块的核心业务服务层（`DocumentUploadService`、`DocumentQueryService`、`DocumentPreviewService`、`DocumentDownloadService`、`DocumentDeleteService` 等）。**
+**下一步：开启 `ingestion`（ETL 文档解析、分块与向量化入库）模块开发。**
