@@ -756,8 +756,11 @@ docker compose up -d
 | `auth.model.vo` | 🟢 已完成（AuthTokensResponse、CurrentUserProfileResponse） |
 | `/api/auth/me` | 🟢 已完成并通过联调 |
 | 全链路接口联调验证 | 🟢 已通过联调与前端验证 |
-| group（群组与知识库） | 🟢 **已完成**（4表结构 + 实体/DTO/VO + 2 Mapper/XML + 3 Service + 4 Controller 全量就绪并通过编译，已配置 requests.http 测试用例） |
-| document（文档管理与分片上传） | ⏳ 下一步核心业务模块 |
+| group（群组与知识库） | 🟢 **已完成**（4表结构 + 实体/DTO/VO + 2 Mapper/XML + 3 Service + 4 Controller 全量就绪并通过联调测试） |
+| document - 基础存储与表结构 | 🟢 **已完成**（MinIO 容器 + 3 表结构 + ObjectStorageService / MinioStorageService 抽象） |
+| document - Model & Mapper | 🟢 **已完成**（DocumentStatus 枚举 + 3 Entity + 4 DTO + 5 VO + 3 Mapper 接口与 XML，全量编译通过） |
+| document - Service 业务层 | ⏳ 下一步（DocumentUploadService / Query / Preview / Download / Delete） |
+| document - Controller 与接口联调 | ⏳ 待进行 |
 | ingestion（ETL流水线） | ⏳ 后续 |
 | engine（PGvector向量混合检索） | ⏳ 后续 |
 | qa（知识库问答） | ⏳ 后续 |
@@ -781,6 +784,8 @@ docker compose up -d
 
 ## 当前进度节点
 
-**已完成：`group` 模块全链路闭环：4 张表初始化 → 4 个枚举 → 4 个 Entity + 3 个 DTO + 4 个 VO → 2 个 Mapper 接口与 XML → 3 个 Service（`GroupMembershipService`、`GroupManagementService`、`GroupJoinRequestService`）→ 4 个 Controller（`GroupQueryController`、`GroupManagementController`、`InvitationDecisionController`、`GroupJoinRequestController`），全量编译通过并通过测试配置。**
+**已完成：`document` 模块前两阶段落地：**
+1. **基础设施与存储层**：拉起 `argus-minio` 容器，初始化 `documents`、`document_upload_sessions`、`document_upload_chunks` 3 张数据表；完成 `ObjectStorageService` 契约及 `MinioStorageService`（双重检查锁自动建桶、服务端 compose 合并）与 `MissingObjectStorageService` 优雅降级；
+2. **数据模型与持久层**：创建 `DocumentStatus` 枚举、3 个 MyBatis-Plus 实体类、4 个请求 DTO、5 个响应 VO、3 个 Mapper 接口以及 3 个 XML 映射文件，通过全量编译。
 
-**下一步：启动本地环境运行 `./gradlew bootRun`，通过 `requests.http` 执行群组创建、邀请、申请全链路验证；随后开启下一个核心模块：`document`（文档元数据管理、分片上传与 MinIO/本地存储）。**
+**下一步：编写 `document` 模块的核心业务服务层（`DocumentUploadService`、`DocumentQueryService`、`DocumentPreviewService`、`DocumentDownloadService`、`DocumentDeleteService` 等）。**
