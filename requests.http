@@ -16,7 +16,6 @@ Content-Type: application/json
 }
 
 ### 4. 用户登录（获取 AccessToken，响应头下发 httpOnly Cookie）
-# @name login
 POST http://localhost:8080/api/auth/login
 Content-Type: application/json
 
@@ -25,8 +24,11 @@ Content-Type: application/json
   "password": "Password123!"
 }
 
-### 提取并暂存登录得到的 accessToken
-@accessToken = {{login.response.body.data.accessToken}}
+> {%
+    // IntelliJ IDEA 官方规范：将响应中的 accessToken 保存到全局变量，后续请求直接引用 {{accessToken}}
+    client.global.set("accessToken", response.body.data.accessToken);
+    client.log(">>> [已自动保存 accessToken]: " + response.body.data.accessToken);
+%}
 
 ### 5. 受保护端点：获取当前用户个人信息（必须带 Bearer Token）
 GET http://localhost:8080/api/auth/me
@@ -38,6 +40,11 @@ GET http://localhost:8080/api/auth/me
 ### 7. 刷新 Token（依赖 Cookie 中的 Refresh Token）
 POST http://localhost:8080/api/auth/refresh
 
+> {%
+    client.global.set("accessToken", response.body.data.accessToken);
+    client.log(">>> [刷新成功，已更新 accessToken]: " + response.body.data.accessToken);
+%}
+
 ### 8. 退出登录（吊销 Refresh Token 并清空 Cookie）
 POST http://localhost:8080/api/auth/logout
 
@@ -46,7 +53,6 @@ POST http://localhost:8080/api/auth/logout
 ### ===================================================
 
 ### 9. 创建群组 / 知识库（自动将当前用户设为 OWNER）
-# @name createGroup
 POST http://localhost:8080/api/groups
 Content-Type: application/json
 Authorization: Bearer {{accessToken}}
@@ -56,23 +62,28 @@ Authorization: Bearer {{accessToken}}
   "description": "存放微服务、RAG 与系统设计文档"
 }
 
-### 提取刚才创建的群组 ID（供后续接口直接引用）
-@groupId = {{createGroup.response.body.data}}
+> {%
+    // 保存新建群组 ID 到全局变量，后续请求直接引用 {{groupId}}
+    client.global.set("groupId", response.body.data);
+    client.log(">>> [已自动保存 groupId]: " + response.body.data);
+%}
 
 ### 10. 查询当前用户可见的所有群组（包含我拥有的、加入的、待处理邀请）
-# @name listMyGroups
 GET http://localhost:8080/api/groups/my
 Authorization: Bearer {{accessToken}}
 
-### 提取返回列表中的群编码 groupCode
-@groupCode = {{listMyGroups.response.body.data.ownedGroups[0].groupCode}}
+> {%
+    if (response.body.data.ownedGroups && response.body.data.ownedGroups.length > 0) {
+        client.global.set("groupCode", response.body.data.ownedGroups[0].groupCode);
+        client.log(">>> [已自动保存 groupCode]: " + response.body.data.ownedGroups[0].groupCode);
+    }
+%}
 
 ### 11. 查询指定群组的成员列表（仅 OWNER 或成员可查）
 GET http://localhost:8080/api/groups/{{groupId}}/members
 Authorization: Bearer {{accessToken}}
 
-### 12. 创建群组邀请（仅群主 OWNER 可发起）
-# @name createInvitation
+### 12. 创建群组邀请（仅群主 OWNER 可发起，邀请用户 ID: 1）
 POST http://localhost:8080/api/groups/{{groupId}}/invitations
 Content-Type: application/json
 Authorization: Bearer {{accessToken}}
@@ -81,8 +92,10 @@ Authorization: Bearer {{accessToken}}
   "inviteeUserId": 1
 }
 
-### 提取邀请 ID
-@invitationId = {{createInvitation.response.body.data}}
+> {%
+    client.global.set("invitationId", response.body.data);
+    client.log(">>> [已自动保存 invitationId]: " + response.body.data);
+%}
 
 ### 13. 查询当前用户发出的所有群组邀请
 GET http://localhost:8080/api/groups/invitations/my-sent
@@ -101,7 +114,6 @@ POST http://localhost:8080/api/invitations/{{invitationId}}/cancel
 Authorization: Bearer {{accessToken}}
 
 ### 17. 提交加入群组申请（用户凭群编码 groupCode 申请加入）
-# @name joinRequest
 POST http://localhost:8080/api/groups/join-requests
 Content-Type: application/json
 Authorization: Bearer {{accessToken}}
@@ -110,8 +122,10 @@ Authorization: Bearer {{accessToken}}
   "groupCode": "{{groupCode}}"
 }
 
-### 提取申请 ID
-@requestId = {{joinRequest.response.body.data}}
+> {%
+    client.global.set("requestId", response.body.data);
+    client.log(">>> [已自动保存 requestId]: " + response.body.data);
+%}
 
 ### 18. 查询当前用户提交的所有加入申请
 GET http://localhost:8080/api/groups/join-requests/my
