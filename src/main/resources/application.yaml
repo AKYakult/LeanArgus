@@ -4,19 +4,22 @@ server:
 spring:
   application:
     name: MyArgus
-
-#  sql:
-#    init:
-#      mode: always
-#      continue-on-error: false
-#      schema-locations:
-#        - classpath:sql/schema_temp.sql
-
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 60MB
   datasource:
     url: jdbc:postgresql://localhost:12138/argus
     username: "jin"
     password: "021799"
     driver-class-name: org.postgresql.Driver
+
+storage:
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    bucket: ${MINIO_BUCKET:argus-rag-documents}
 
 mybatis-plus:
   mapper-locations: classpath*:/mappers/**/*.xml

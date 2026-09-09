@@ -37,6 +37,9 @@ dependencies {
     implementation("com.baomidou:mybatis-plus-spring-boot4-starter:3.5.17")
     runtimeOnly("org.postgresql:postgresql")
 
+    // MinIO 对象存储 SDK
+    implementation("io.minio:minio:8.5.17")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
